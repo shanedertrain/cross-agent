@@ -1,4 +1,5 @@
-//! Operator actions: local retention (gc) and rebuilding inboxes from JetStream (recover).
+//! Operator actions: retention and the stream's size cap, local cleanup (gc), and rebuilding
+//! inboxes from JetStream (recover).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -9,12 +10,17 @@ use xagent_proto::{AgentId, Channel, Error, ErrorCode, Message, WORKSPACE, ts_be
 use xagent_store::{Delivery, StoreError};
 
 use crate::daemon::{Daemon, internal};
-use crate::protocol::Recover;
+use crate::protocol::{Recover, Retention};
 use crate::topics::{filters, is_subscribed, nats_error};
 
 const GC_INTERVAL: Duration = Duration::from_secs(3600);
 /// Most messages re-read per agent.
 const RECOVER_MAX_MESSAGES: usize = 5000;
+/// Longest broker retention `xagent retention --days` accepts (ten years).
+const MAX_RETENTION_DAYS: u32 = 3650;
+/// Largest stream size cap `xagent retention --max-mb` accepts (1 TiB).
+const MAX_STREAM_MB: u32 = 1 << 20;
+const MIB: i64 = 1 << 20;
 
 impl Daemon {
     /// This host's retention: `[retention] local_days`, capped by the broker's (read live; the
@@ -22,7 +28,7 @@ impl Daemon {
     async fn effective_retention(&self) -> Duration {
         let local = self.config.local_retention;
         match self.bus() {
-            Some(bus) => match bus.retention().await {
+            Some(bus) => match bus.stream_limits().await.map(|l| l.retention) {
                 Ok(broker) if !broker.is_zero() => local.min(broker),
                 Ok(_) => local,
                 Err(err) => {
@@ -72,41 +78,56 @@ impl Daemon {
         }
     }
 
-    /// Shows the broker's retention and this host's; with `days`, sets the broker's first.
-    pub(crate) async fn retention(&self, days: Option<u32>) -> Result<Value, Error> {
+    /// Shows the broker's limits and this host's retention; sets the broker's limits first when
+    /// `params` names any.
+    pub(crate) async fn retention(&self, params: Retention) -> Result<Value, Error> {
         let bus = self.require_bus("reading the retention")?.clone();
-        let previous = match days {
-            Some(days) => {
-                if !(1..=3650).contains(&days) {
-                    return Err(Error::new(
-                        ErrorCode::InvalidArgument,
-                        "days must be 1-3650",
-                    ));
-                }
-                let new = Duration::from_secs(u64::from(days) * 86_400);
-                let old = bus
-                    .set_retention(new)
-                    .await
-                    .map_err(|err| nats_error("setting the retention", &err))?;
-                info!(
-                    old_days = old.as_secs() / 86_400,
-                    new_days = days,
-                    "broker retention set"
-                );
-                Some(old.as_secs() / 86_400)
-            }
-            None => None,
+        let invalid = |message: &str| Error::new(ErrorCode::InvalidArgument, message);
+        if params
+            .days
+            .is_some_and(|d| !(1..=MAX_RETENTION_DAYS).contains(&d))
+        {
+            return Err(invalid("days must be 1-3650"));
+        }
+        if params
+            .max_mb
+            .is_some_and(|mb| !(1..=MAX_STREAM_MB).contains(&mb))
+        {
+            return Err(invalid("max_mb must be 1-1048576"));
+        }
+        let previous = if params.days.is_some() || params.max_mb.is_some() {
+            let old = bus
+                .set_stream_limits(
+                    params
+                        .days
+                        .map(|d| Duration::from_secs(u64::from(d) * 86_400)),
+                    params.max_mb.map(|mb| i64::from(mb) * MIB),
+                )
+                .await
+                .map_err(|err| nats_error("setting the stream limits", &err))?;
+            info!(
+                old_days = old.retention.as_secs() / 86_400,
+                old_max_mb = old.max_bytes / MIB,
+                days = params.days,
+                max_mb = params.max_mb,
+                "broker stream limits set"
+            );
+            Some(old)
+        } else {
+            None
         };
         let broker = bus
-            .retention()
+            .stream_limits()
             .await
             .map_err(|err| nats_error("reading the retention", &err))?;
         let local = self.config.local_retention;
         Ok(serde_json::json!({
-            "broker_days": broker.as_secs() / 86_400,
+            "broker_days": broker.retention.as_secs() / 86_400,
+            "broker_max_mb": broker.max_bytes / MIB,
             "local_days": local.as_secs() / 86_400,
-            "effective_local_days": local.min(broker).as_secs() / 86_400,
-            "previous_broker_days": previous,
+            "effective_local_days": local.min(broker.retention).as_secs() / 86_400,
+            "previous_broker_days": previous.map(|p| p.retention.as_secs() / 86_400),
+            "previous_broker_max_mb": previous.map(|p| p.max_bytes / MIB),
         }))
     }
 
@@ -117,9 +138,10 @@ impl Daemon {
         let bus = self.require_bus("recovering inboxes")?.clone();
         // The stream keeps the broker's retention; a longer window reads nothing more.
         let broker = bus
-            .retention()
+            .stream_limits()
             .await
-            .map_err(|err| nats_error("reading the retention", &err))?;
+            .map_err(|err| nats_error("reading the retention", &err))?
+            .retention;
         let max_hours = u32::try_from(broker.as_secs() / 3600).unwrap_or(u32::MAX);
         if !(1..=max_hours).contains(&params.hours) {
             return Err(Error::new(

@@ -1,18 +1,24 @@
-# xagent 2.0 host configuration: copy to ~/.config/xagent/config.toml (or set XAGENT_CONFIG,
-# or pass --config). Machine-level. Never commit a filled-in copy: it points at credential files.
+# xagent 2.0 host configuration: copy to $XDG_CONFIG_HOME/xagent/config.toml (default
+# ~/.config/xagent/config.toml), or set XAGENT_CONFIG, or pass --config. Machine-level. Never
+# commit a filled-in copy: it points at credential files.
 # Every key is optional; the values shown are the defaults unless marked <placeholder>.
 # Unknown keys are refused.
 
-# host_id = "workstation-a"            # default: the short hostname
+# host_id = "workstation-a"            # default: the short hostname. Unique per daemon (it scopes
+#                                      # `xagent recover`); a duplicate waits until the other stops.
 
 [nats]
 servers = ["nats://127.0.0.1:4222"]    # LAN: ["tls://nats-host.local:4222"]
 # user and password_file go together. The password lives in its own 0600 file, never here.
 # user = "xagent"                      # <placeholder>
 # password_file = "~/.config/xagent/nats.password"
+# Or a .creds file (user JWT and NKey seed) for JWT auth, e.g. Synadia Cloud or a company cluster;
+# 0600. Excludes user and password_file.
+# credentials_file = "~/.config/xagent/nats.creds"
 # tls_ca = "~/.config/xagent/ca.pem"   # needed when the servers use tls:// with a private CA
 
 [daemon]
+# Defaults follow $XDG_STATE_HOME and $XDG_DATA_HOME (when absolute), shown here unset.
 # socket = "~/.local/state/xagent/xagentd.sock"   # the MCP socket (mcp.sock) sits next to it
 # state_db = "~/.local/share/xagent/xagent.db"
 
@@ -20,8 +26,8 @@ servers = ["nats://127.0.0.1:4222"]    # LAN: ["tls://nats-host.local:4222"]
 # wake = true                          # wake an idle agent on new unread messages (fixed text only)
 # wake_min_interval_seconds = 120      # at most one wake per agent per interval
 # wake_max_wait_seconds = 1800         # drop a wake that finds no idle moment this long
-# claude_sessions_dir = "~/.claude/sessions"
-# codex_control_socket = "~/.codex/app-server-control/app-server-control.sock"
+# Claude and Codex are woken in their own profile directory (CLAUDE_CONFIG_DIR, CODEX_HOME, as
+# their MCP server sees them; default ~/.claude, ~/.codex): nothing to set here.
 # dsh_url = "http://127.0.0.1:3080"    # loopback http only: dsh's login token is sent there
 # dsh_web_log = "~/.dsh/web.log"       # dsh prints its rotating login token here
 
@@ -33,6 +39,7 @@ servers = ["nats://127.0.0.1:4222"]    # LAN: ["tls://nats-host.local:4222"]
 
 # How long this host keeps local copies of messages. The broker's retention, shared by every host,
 # caps it: show both with `xagent retention`, change the broker's with `xagent retention --days N`
-# (new streams keep 7 days).
+# (new streams keep 7 days). The broker's size cap (`xagent retention --max-mb N`, new streams 1024)
+# deletes the oldest messages sooner when the stream fills.
 [retention]
 # local_days = 7

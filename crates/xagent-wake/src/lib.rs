@@ -20,5 +20,5 @@ pub use claude::{ClaudeInbox, SessionReport, inbox_frame, key_file_name};
 pub use codex::{CodexAppServer, LoadedThread};
 pub use dsh::is_loopback_url;
 pub use error::WakeError;
-pub use policy::{Readiness, Target, WakeConfig, WakeSource, Waker};
+pub use policy::{Endpoint, Readiness, Target, WakeConfig, WakeSource, Waker};
 pub use text::{Counts, waiting_text, wake_text};

@@ -663,20 +663,14 @@ fn topic_round_trip_with_a_reply_obligation_over_mcp() {
 
 /// A Claude window whose MCP server has not called a tool yet (a resumed conversation) is woken,
 /// from counters only, when messages wait for the identity it would bind; its first tool call
-/// binds it and finds them.
+/// binds it and finds them. Its profile lives in a non-default `CLAUDE_CONFIG_DIR`: the window and
+/// the session it binds are woken there, and doctor checks that registry.
 #[test]
 fn unbound_claude_window_is_woken_for_waiting_messages() {
     let nats = Nats::start();
     let claude_dir = TempDir::new().expect("fake claude config dir");
     let (claude, frames) = ClaudeSession::with_inbox(claude_dir.path(), "sess-resumed");
-    let host = Host::start_with(
-        &nats,
-        "host-a",
-        &format!(
-            "[notify]\nclaude_sessions_dir = \"{}\"\n",
-            claude_dir.path().join("sessions").display()
-        ),
-    );
+    let host = Host::start_with(&nats, "host-a", "[notify]\nwake_min_interval_seconds = 0\n");
     // The conversation ran before (its identity is registered), and is closed now.
     let who = host
         .run(&[
@@ -718,6 +712,31 @@ fn unbound_claude_window_is_woken_for_waiting_messages() {
     let status = window.call("inbox_status", json!({}));
     assert_eq!(status["unread_total"], 1, "{status}");
     assert_eq!(window.call("whoami", json!({}))["agent_id"], id.as_str());
+
+    // Bound now: the session is woken at the window's registry too (an unread-count line, where
+    // the unbound window got a "waiting" line).
+    host.as_conv("conv-alice", "dm", &["--to", &id, "--summary", "again"])
+        .expect("dm sent");
+    let bound = format!("unread messages for conversations/{id}");
+    wait_for(
+        Duration::from_secs(20),
+        "a wake for the bound session",
+        || {
+            frames
+                .recv_timeout(Duration::from_secs(1))
+                .ok()
+                .filter(|frame| frame.contains(&bound))
+        },
+    );
+    let (_, report) = host.run_with_stdin(&["doctor"], "");
+    let registry = claude_dir.path().join("sessions");
+    assert!(
+        report.contains(&format!(
+            "PASS  claude inbox       1 live session(s) in {}, all reachable",
+            registry.display()
+        )),
+        "{report}"
+    );
 }
 
 /// A fake Codex app-server: one loaded user thread running in `cwd`, idle; `turn/start` params
@@ -771,17 +790,14 @@ fn unbound_codex_thread_is_found_and_woken() {
     let dir = TempDir::new().expect("temp dir");
     let project = dir.path().join("project");
     std::fs::create_dir(&project).expect("project dir");
-    let socket = dir.path().join("app-server.sock");
+    // The app-server of a non-default CODEX_HOME: the window is woken through it.
+    let socket = dir
+        .path()
+        .join("app-server-control/app-server-control.sock");
+    std::fs::create_dir(dir.path().join("app-server-control")).expect("control dir");
     let thread = "019a7b3c-1d2e-7f40-8a9b-0c1d2e3f4a5b";
     let turns = fake_app_server(&socket, thread, &project);
-    let host = Host::start_with(
-        &nats,
-        "host-a",
-        &format!(
-            "[notify]\ncodex_control_socket = \"{}\"\n",
-            socket.display()
-        ),
-    );
+    let host = Host::start(&nats, "host-a");
     let id = host.agent_id(thread);
     host.as_conv("conv-alice", "dm", &["--to", &id, "--summary", "SECRET"])
         .expect("dm sent");

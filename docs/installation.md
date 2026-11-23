@@ -3,6 +3,12 @@
 Two layouts: **single host** (NATS on loopback) and **LAN** (one NATS server, a daemon on every participating host).
 Nothing here edits shell rc files or overwrites an existing config or secret.
 
+**Paths.** This page shows the default directories. The binary and the scripts follow the XDG base directory spec:
+`~/.config` is `$XDG_CONFIG_HOME`, `~/.local/share` is `$XDG_DATA_HOME` and `~/.local/state` is `$XDG_STATE_HOME`
+whenever the variable holds an absolute path. Every process must see the same values: `install.sh` writes the ones
+set at install time into the `xagentd` unit, and a client that starts its MCP server with a filtered environment
+(Codex) needs them in that server's `env`, like `XAGENT_CONFIG`.
+
 ## Requirements
 
 | Need | Note |
@@ -21,7 +27,7 @@ scripts/install.sh              # --prefix DIR for somewhere other than ~/.local
 ```
 
 It runs `cargo build --release --locked -p xagent`, installs `~/.local/bin/xagent`, copies `config.example.toml` to
-`~/.config/xagent/config.toml` (0600) if absent, and installs the systemd user units `xagentd` and `nats-server`. It
+`~/.config/xagent/config.toml` (0600) if absent, and installs the systemd user unit `xagentd` running that binary. It
 starts nothing. Without the script: `cargo install --path crates/xagent --locked`.
 
 ## 2. NATS
@@ -29,9 +35,14 @@ starts nothing. Without the script: `cargo install --path crates/xagent --locked
 ### Single host
 
 ```bash
-scripts/setup-nats.sh           # nats-server binary, ~/.config/xagent/{nats-server.conf,nats.password}
+scripts/setup-nats.sh           # nats-server binary and unit, ~/.config/xagent/{nats-server.conf,nats.password}
 scripts/run-nats.sh start       # without systemd: background, pid and log in ~/.local/state/xagent/
 ```
+
+`setup-nats.sh` uses `~/.local/bin/nats-server` (`--prefix DIR`: `DIR/bin`, as for `install.sh`), else a
+`nats-server` on `PATH` such as a distro package, else downloads a checksum-verified release there. It installs the
+systemd user unit `nats-server` with `ExecStart` naming that binary and the generated config. `run-nats.sh` finds the
+binary the same way; set `NATS_SERVER` for one under another prefix.
 
 The generated config listens on `127.0.0.1:4222` (monitoring `127.0.0.1:8222`), stores JetStream in
 `~/.local/share/xagent/nats` (0700), and defines one user `xagent` with a random password. That user may publish and subscribe
@@ -46,6 +57,12 @@ only `xagent.v1.>`, `$JS.API.>`, `$JS.ACK.>`, the four `$KV.XAGENT_*` buckets (`
 3. Copy `~/.config/xagent/pki/ca.pem` to each client host (never `ca-key.pem`) and the password file with it, or give each
    host its own user in the server config so one credential can be revoked alone.
 4. Client hosts set `servers = ["tls://nats-host:4222"]` and `tls_ca` (below).
+
+### Hosted or company NATS (JWT)
+
+A server in operator mode (Synadia Cloud, or a cluster run with `nsc`) authenticates with a `.creds` file. Set
+`servers` to its URLs and `credentials_file` to the file (0600), instead of `user` and `password_file`. The account
+needs JetStream and the subjects listed above.
 
 ### PKI
 
@@ -62,7 +79,8 @@ the `openssl x509 -req` step with the same CA and `pki/server.ext`, then reload 
 
 ## 3. Configuration
 
-`~/.config/xagent/config.toml` (or `--config`, or `$XAGENT_CONFIG`). Every key is optional; unknown keys are refused.
+`$XDG_CONFIG_HOME/xagent/config.toml`, default `~/.config/xagent/config.toml` (or `--config`, or `$XAGENT_CONFIG`).
+Every key is optional; unknown keys are refused.
 `config.example.toml` documents each one.
 
 ```toml
@@ -79,14 +97,14 @@ topic = "editor-auto"
 
 | Section | Keys |
 |---|---|
-| top | `host_id` (default: short hostname; a label for diagnostics) |
-| `[nats]` | `servers`, `user`, `password_file`, `tls_ca` |
-| `[daemon]` | `socket` (`~/.local/state/xagent/xagentd.sock`; `mcp.sock` sits beside it), `state_db` (`~/.local/share/xagent/xagent.db`) |
-| `[notify]` | `wake`, `wake_min_interval_seconds` (120), `wake_max_wait_seconds` (1800), `claude_sessions_dir`, `codex_control_socket`, `dsh_url`, `dsh_web_log` |
+| top | `host_id` (default: short hostname; 1-64 of `A-Z a-z 0-9 _ -`). Must be unique per daemon: it scopes `xagent recover`, and a second daemon with a `host_id` in use waits, not ready, until the first stops |
+| `[nats]` | `servers`, `user` + `password_file`, or `credentials_file` (a `.creds` file: user JWT and NKey seed, for JWT auth; 0600; excludes the other two), `tls_ca` |
+| `[daemon]` | `socket` (`$XDG_STATE_HOME/xagent/xagentd.sock`, default `~/.local/state/...`; `mcp.sock` sits beside it), `state_db` (`$XDG_DATA_HOME/xagent/xagent.db`, default `~/.local/share/...`) |
+| `[notify]` | `wake`, `wake_min_interval_seconds` (120), `wake_max_wait_seconds` (1800), `dsh_url`, `dsh_web_log`. Claude and Codex are woken in their own profile directory (`CLAUDE_CONFIG_DIR`, `CODEX_HOME` of the MCP server's environment; default `~/.claude`, `~/.codex`) |
 | `[[projects]]` | `path`, `topic` (one token; the most specific path wins) |
 | `[retention]` | `local_days` (7): oldest local copy on this host; the broker's retention (`xagent retention`) caps it |
 
-Secrets never go in this file, only the path of the password file.
+Secrets never go in this file, only the path of the password or credentials file.
 
 ## 4. Services
 
@@ -118,7 +136,8 @@ Add the hooks it prints to `~/.claude/settings.json`: `Stop` runs `xagent hook c
 
 **Claude's inbox and `crossSessionInbound`.** xagent wakes an idle Claude session by writing to the session's own
 cross-session inbox, the socket Claude Code uses for its `SendMessage` tool. Claude Code does not document this
-interface. xagent reads the session record and peer-token file that Claude writes under `~/.claude/sessions/`, so a
+interface. xagent reads the session record and peer-token file that Claude writes under `~/.claude/sessions/` (under
+`$CLAUDE_CONFIG_DIR` when the session sets it), so a
 Claude Code update can change or remove it. When that happens, `xagent doctor` reports the Claude inbox as unreachable
 and sessions stop waking; the Stop hook still reminds each session at the end of its turn.
 
@@ -149,7 +168,7 @@ tool_timeout_sec = 30
 
 Add the `Stop` hook to `~/.codex/hooks.json`. Codex asks once, in the TUI, to trust a new or changed hook ("Hooks need
 review"); an untrusted hook does not run. Wake needs the Codex TUI's shared app-server (control socket at
-`~/.codex/app-server-control/app-server-control.sock`). `codex exec` cannot answer MCP approval prompts: set
+`$CODEX_HOME/app-server-control/app-server-control.sock`, default `~/.codex`). `codex exec` cannot answer MCP approval prompts: set
 `default_tools_approval_mode = "approve"` for `[mcp_servers.xagent]` there.
 
 ### dsh
@@ -186,7 +205,7 @@ xagent topic create --conversation human --client claude-code firmware.usb --des
 | Task | Command |
 |---|---|
 | Health | `xagent doctor`, `xagent status` |
-| Retention | `xagent retention` shows it. The broker keeps messages 7 days by default; `xagent retention --days N` changes that for every host, and the broker deletes older messages at once. `[retention] local_days` in a host's config keeps that host's local copies shorter (for example a laptop under a data policy). Local cleanup runs at start and hourly; `xagent gc --dry-run` previews |
+| Retention | `xagent retention` shows it. The broker keeps messages 7 days by default; `xagent retention --days N` changes that for every host, and the broker deletes older messages at once. The stream is capped at 1 GiB by default; `xagent retention --max-mb N` changes that for every host, and at the cap the broker deletes the oldest messages to make room (a shorter retention in effect). `[retention] local_days` in a host's config keeps that host's local copies shorter (for example a laptop under a data policy). Local cleanup runs at start and hourly; `xagent gc --dry-run` previews |
 | Lost SQLite | Stop the daemon, move the DB aside, start it, `xagent recover --hours 24` (unread again; at most the broker's retention back) |
 | Reset one consumer | Stop the daemon, `nats consumer rm XAGENT_MESSAGES xagent_<ws>_<agent>_<hash>`, start it; `recover` fills the gap |
 

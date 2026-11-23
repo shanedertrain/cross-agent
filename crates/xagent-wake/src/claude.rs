@@ -14,7 +14,6 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixStream;
-use xagent_proto::Client;
 
 use crate::error::WakeError;
 use crate::policy::{Readiness, Target};
@@ -107,22 +106,18 @@ impl ClaudeInbox {
         Some(reports)
     }
 
-    pub(crate) fn reaches(target: &Target) -> bool {
-        target.client == Client::ClaudeCode
-    }
-
     /// The live record of the target's conversation. Found by pid, it must still carry the
     /// target's session id: after a `/clear` the process runs a new conversation, which is not
     /// woken for the old one's messages.
-    fn record(&self, target: &Target) -> Option<SessionRecord> {
+    fn record(&self, target: &Target, pid: Option<u32>) -> Option<SessionRecord> {
         let conversation = target.conversation.as_str();
-        find_record(&self.sessions_dir, target.claude_pid, Some(conversation))
+        find_record(&self.sessions_dir, pid, Some(conversation))
             .filter(|rec| rec.session_id.as_deref() == Some(conversation))
     }
 
     /// Whether the session is idle (and has been for a moment) per its registry record.
-    pub(crate) fn ready(&self, target: &Target) -> Readiness {
-        let Some(rec) = self.record(target) else {
+    pub(crate) fn ready(&self, target: &Target, pid: Option<u32>) -> Readiness {
+        let Some(rec) = self.record(target, pid) else {
             return Readiness::Gone(
                 "no live Claude session record of this conversation".to_owned(),
             );
@@ -144,9 +139,9 @@ impl ClaudeInbox {
         Readiness::Ready
     }
 
-    pub(crate) async fn send(&self, target: &Target, text: &str) -> bool {
+    pub(crate) async fn send(&self, target: &Target, pid: Option<u32>, text: &str) -> bool {
         let Some((socket, token)) = self
-            .record(target)
+            .record(target, pid)
             .and_then(|rec| inbox_address(&self.sessions_dir, &rec))
         else {
             return false;

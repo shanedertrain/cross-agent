@@ -15,6 +15,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use xagent_proto::{AgentId, Channel, Client, Conversation, Error, Kind, Priority, Reference};
+use xagent_wake::Endpoint;
 
 /// Longest accepted request or response line, in bytes.
 pub const MAX_LINE_BYTES: usize = 1 << 20;
@@ -65,7 +66,8 @@ pub enum Call {
     ThreadRead(ThreadRead),
     /// Local retention pass; no session needed.
     Gc(Gc),
-    /// Show the broker's and this host's retention; set the broker's with `days`. No session needed.
+    /// Show the broker's stream limits and this host's retention; set the broker's with `days`
+    /// and `max_mb`. No session needed.
     Retention(Retention),
     /// Rebuild inboxes from JetStream; no session needed.
     Recover(Recover),
@@ -102,16 +104,15 @@ pub struct SessionOpen {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WindowOpen {
-    pub client: Client,
     /// The client's working directory (absolute).
     pub cwd: PathBuf,
     /// The conversation named by the launch environment: dsh's session id, Claude's session id
-    /// at launch (the live registry record, found by `claude_pid`, wins). Codex names none.
+    /// at launch (the live registry record, found by the endpoint's pid, wins). Codex names none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation: Option<Conversation>,
-    /// The Claude Code process the window belongs to.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub claude_pid: Option<u32>,
+    /// The client, and where it is woken (its own profile directory); a session the window opens
+    /// is woken there too.
+    pub endpoint: Endpoint,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -276,6 +277,9 @@ pub struct Retention {
     /// Set the broker's message retention (every host) to this many days.
     #[serde(default)]
     pub days: Option<u32>,
+    /// Set the broker's stream size cap (every host) to this many MiB.
+    #[serde(default)]
+    pub max_mb: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

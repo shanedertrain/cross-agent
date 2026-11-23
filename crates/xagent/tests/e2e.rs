@@ -221,3 +221,181 @@ fn dm_in_flight_across_a_crash_is_delivered_exactly_once() {
         "{again}"
     );
 }
+
+/// Runs `xagent daemon` on a host expected to refuse to start; returns its stderr.
+fn daemon_refuses(host: &Host) -> String {
+    let mut child = host
+        .command()
+        .arg("daemon")
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("daemon starts");
+    let status = wait_for(Duration::from_secs(10), "the daemon to exit", || {
+        child.try_wait().expect("daemon status")
+    });
+    assert!(!status.success(), "the daemon must refuse to run");
+    let mut stderr = String::new();
+    std::io::Read::read_to_string(&mut child.stderr.take().expect("stderr"), &mut stderr)
+        .expect("read stderr");
+    stderr
+}
+
+/// `[nats] credentials_file` excludes `user`/`password_file`; doctor and the daemon both say so.
+/// A credentials file that cannot be read stops the daemon at start, naming the file.
+#[test]
+fn nats_credentials_file_is_validated() {
+    let nats = Nats::start();
+    let both = Host::configure(
+        &nats,
+        "host-a",
+        "user = \"xagent\"\npassword_file = \"~/pw\"\ncredentials_file = \"~/x.creds\"\n",
+    );
+    let (code, report) = both.run_with_stdin(&["doctor"], "");
+    assert_eq!(code, Some(1), "{report}");
+    assert!(
+        report.contains("FAIL  nats credentials")
+            && report.contains("credentials_file excludes user and password_file"),
+        "{report}"
+    );
+    let stderr = daemon_refuses(&both);
+    assert!(
+        stderr.contains("credentials_file excludes user and password_file"),
+        "{stderr}"
+    );
+
+    let missing = Host::configure(&nats, "host-b", "credentials_file = \"~/x.creds\"\n");
+    let (_, report) = missing.run_with_stdin(&["doctor"], "");
+    assert!(
+        report.contains("FAIL  nats credentials") && report.contains("x.creds missing"),
+        "{report}"
+    );
+    let stderr = daemon_refuses(&missing);
+    let path = missing.dir().join("home/x.creds");
+    assert!(
+        stderr.contains(&format!("NATS credentials file {}", path.display())),
+        "{stderr}"
+    );
+}
+
+/// A daemon started outside the harness, killed however the test ends.
+struct Daemon(std::process::Child);
+
+impl Drop for Daemon {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// With no `--config` and no paths in the config, the binary follows the XDG base directory
+/// spec: config from `$XDG_CONFIG_HOME/xagent`, state database under `$XDG_DATA_HOME/xagent`,
+/// sockets under `$XDG_STATE_HOME/xagent`; a relative value is ignored (`~` defaults).
+#[test]
+fn default_paths_follow_xdg_base_directories() {
+    let nats = Nats::start();
+    let root = tempfile::Builder::new()
+        .prefix("xa-xdg")
+        .tempdir()
+        .expect("temp dir");
+    let (home, config, data, state) = (
+        root.path().join("home"),
+        root.path().join("config"),
+        root.path().join("data"),
+        root.path().join("state"),
+    );
+    std::fs::create_dir_all(config.join("xagent")).expect("config dir");
+    std::fs::write(
+        config.join("xagent/config.toml"),
+        format!("host_id = \"xdg\"\n[nats]\nservers = [\"{}\"]\n", nats.url),
+    )
+    .expect("config");
+    let xagent = |args: &[&str]| {
+        let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_xagent"));
+        cmd.args(args)
+            .env("HOME", &home)
+            .env_remove("XAGENT_CONFIG")
+            .env("XDG_CONFIG_HOME", &config)
+            .env("XDG_DATA_HOME", &data)
+            .env("XDG_STATE_HOME", &state);
+        cmd
+    };
+    let _daemon = Daemon(
+        xagent(&["daemon"])
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("daemon starts"),
+    );
+    let status = wait_for(Duration::from_secs(15), "the daemon to be ready", || {
+        let out = xagent(&["status"]).output().ok()?;
+        let status: Value = serde_json::from_slice(&out.stdout).ok()?;
+        (status["nats"]["ready"] == true).then_some(status)
+    });
+    assert_eq!(
+        status["host_id"], "xdg",
+        "the XDG config was read: {status}"
+    );
+    assert!(state.join("xagent/xagentd.sock").exists());
+    assert!(state.join("xagent/mcp.sock").exists());
+    assert!(data.join("xagent/xagent.db").exists());
+
+    // A relative XDG_STATE_HOME is ignored: the CLI looks for ~/.local/state/xagent/xagentd.sock.
+    let out = xagent(&["status"])
+        .env("XDG_STATE_HOME", "relative/state")
+        .output()
+        .expect("xagent runs");
+    let err: Value = serde_json::from_slice(&out.stderr).expect("JSON error");
+    let message = err["error"]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains(
+            &home
+                .join(".local/state/xagent/xagentd.sock")
+                .display()
+                .to_string()
+        ),
+        "{err}"
+    );
+}
+
+/// `host_id` is unique: a second daemon with the same `host_id` (another socket, so another
+/// daemon) is refused, and `status` and doctor name the run that holds it. Once that daemon dies
+/// and its host lease expires (TTL 30 s), the second becomes ready.
+#[test]
+fn duplicate_host_id_is_refused_until_the_first_lease_ends() {
+    let nats = Nats::start();
+    let mut first = Host::start(&nats, "same-host");
+    let first_run = first.run(&["status"]).expect("status")["run_id"]
+        .as_str()
+        .expect("run_id")
+        .to_owned();
+    let mut second = Host::configure(&nats, "same-host", "");
+    second.launch_daemon();
+    let taken = wait_for(
+        Duration::from_secs(15),
+        "the second daemon to be refused",
+        || {
+            let status = second.run(&["status"]).ok()?;
+            status["nats"]["host_id_taken"].as_str().map(str::to_owned)
+        },
+    );
+    assert!(
+        taken.contains("host_id \"same-host\"") && taken.contains(&first_run),
+        "{taken}"
+    );
+    let (code, report) = second.run_with_stdin(&["doctor"], "");
+    assert_eq!(code, Some(1), "{report}");
+    assert!(report.contains("FAIL  host_id"), "{report}");
+    assert!(
+        second.as_conv("conv-x", "whoami", &[]).is_err(),
+        "no sessions while refused"
+    );
+
+    first.crash();
+    wait_for(
+        Duration::from_secs(45),
+        "the first host lease to expire",
+        || {
+            let status = second.run(&["status"]).ok()?;
+            (status["nats"]["ready"] == true).then_some(())
+        },
+    );
+}

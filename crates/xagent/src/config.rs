@@ -1,13 +1,17 @@
-//! Host configuration: `--config`, else `$XAGENT_CONFIG`, else `~/.config/xagent/config.toml`.
+//! Host configuration: `--config`, else `$XAGENT_CONFIG`, else `$XDG_CONFIG_HOME/xagent/config.toml`.
 //!
-//! Secrets are never in this file: it names a password file, read at startup.
+//! Default paths follow the XDG base directory spec: `$XDG_CONFIG_HOME`, `$XDG_DATA_HOME` and
+//! `$XDG_STATE_HOME` when set to an absolute path, else `~/.config`, `~/.local/share` and
+//! `~/.local/state`.
+//!
+//! Secrets are never in this file: it names a password or credentials file, read at startup.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
-use xagent_bus::{NatsSettings, UserPassword};
+use xagent_bus::{NatsAuth, NatsSettings, UserPassword};
 use xagent_core::{DaemonConfig, Project};
 use xagent_wake::WakeConfig;
 
@@ -55,8 +59,6 @@ struct NotifySection {
     wake: Option<bool>,
     wake_min_interval_seconds: Option<f64>,
     wake_max_wait_seconds: Option<f64>,
-    claude_sessions_dir: Option<PathBuf>,
-    codex_control_socket: Option<PathBuf>,
     dsh_url: Option<String>,
     dsh_web_log: Option<PathBuf>,
 }
@@ -77,6 +79,8 @@ struct NatsSection {
     servers: Vec<String>,
     user: Option<String>,
     password_file: Option<PathBuf>,
+    /// A `.creds` file (JWT and `NKey` seed); excludes `user` and `password_file`.
+    credentials_file: Option<PathBuf>,
     tls_ca: Option<PathBuf>,
 }
 
@@ -86,6 +90,7 @@ impl Default for NatsSection {
             servers: default_servers(),
             user: None,
             password_file: None,
+            credentials_file: None,
             tls_ca: None,
         }
     }
@@ -102,11 +107,33 @@ struct DaemonSection {
     state_db: Option<PathBuf>,
 }
 
+/// Where the NATS credentials come from, validated, paths `~` expanded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NatsCredentials {
+    /// `user` with the password in `password_file`.
+    Password { user: String, file: PathBuf },
+    /// A `.creds` file for JWT/NKey auth.
+    CredentialsFile(PathBuf),
+}
+
+impl NatsCredentials {
+    /// The secret file, which must be readable by its owner only.
+    pub fn file(&self) -> &Path {
+        match self {
+            Self::Password { file, .. } | Self::CredentialsFile(file) => file,
+        }
+    }
+}
+
 /// The resolved configuration.
 #[derive(Debug)]
 pub struct Config {
     file: File,
     home: PathBuf,
+    /// `$XDG_DATA_HOME/xagent`: the default state database lives here.
+    data_dir: PathBuf,
+    /// `$XDG_STATE_HOME/xagent`: the default sockets live here.
+    state_dir: PathBuf,
     /// The config file that was read; `None` when the defaults apply.
     source: Option<PathBuf>,
 }
@@ -115,6 +142,16 @@ fn home() -> Result<PathBuf> {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .context("HOME is not set")
+}
+
+/// The xagent directory under an XDG base directory: `$var` when it is an absolute path (the spec
+/// ignores relative ones), else `home/fallback`.
+fn xdg_dir(var: &str, home: &Path, fallback: &str) -> PathBuf {
+    std::env::var_os(var)
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+        .unwrap_or_else(|| home.join(fallback))
+        .join("xagent")
 }
 
 /// `~/x` relative to `home`; anything else unchanged.
@@ -133,7 +170,10 @@ impl Config {
             Some(path) => (path.to_owned(), true),
             None => match std::env::var_os("XAGENT_CONFIG") {
                 Some(path) => (expand(Path::new(&path), &home), true),
-                None => (home.join(".config/xagent/config.toml"), false),
+                None => (
+                    xdg_dir("XDG_CONFIG_HOME", &home, ".config").join("config.toml"),
+                    false,
+                ),
             },
         };
         let (file, source) = match std::fs::read_to_string(&path) {
@@ -149,7 +189,13 @@ impl Config {
                 return Err(err).with_context(|| format!("reading config {}", path.display()));
             }
         };
-        Ok(Self { file, home, source })
+        Ok(Self {
+            file,
+            data_dir: xdg_dir("XDG_DATA_HOME", &home, ".local/share"),
+            state_dir: xdg_dir("XDG_STATE_HOME", &home, ".local/state"),
+            home,
+            source,
+        })
     }
 
     pub fn source(&self) -> Option<&Path> {
@@ -160,19 +206,38 @@ impl Config {
         &self.file.nats.servers
     }
 
-    /// The NATS password file and CA bundle named by the config, `~` expanded.
-    pub fn nats_files(&self) -> (Option<PathBuf>, Option<PathBuf>) {
+    /// The NATS credentials named by `[nats]`; `None` is anonymous.
+    pub fn nats_credentials(&self) -> Result<Option<NatsCredentials>> {
         let nats = &self.file.nats;
-        (
-            nats.password_file.as_deref().map(|p| expand(p, &self.home)),
-            nats.tls_ca.as_deref().map(|p| expand(p, &self.home)),
-        )
+        match (&nats.user, &nats.password_file, &nats.credentials_file) {
+            (None, None, None) => Ok(None),
+            (Some(user), Some(file), None) => Ok(Some(NatsCredentials::Password {
+                user: user.clone(),
+                file: expand(file, &self.home),
+            })),
+            (None, None, Some(file)) => Ok(Some(NatsCredentials::CredentialsFile(expand(
+                file, &self.home,
+            )))),
+            (_, _, Some(_)) => anyhow::bail!(
+                "[nats] credentials_file excludes user and password_file: use one or the other"
+            ),
+            _ => anyhow::bail!("[nats] user and password_file go together"),
+        }
+    }
+
+    /// The CA bundle named by `[nats] tls_ca`, `~` expanded.
+    pub fn nats_tls_ca(&self) -> Option<PathBuf> {
+        self.file
+            .nats
+            .tls_ca
+            .as_deref()
+            .map(|p| expand(p, &self.home))
     }
 
     pub fn state_db(&self) -> PathBuf {
         match &self.file.daemon.state_db {
             Some(path) => expand(path, &self.home),
-            None => self.home.join(".local/share/xagent/xagent.db"),
+            None => self.data_dir.join("xagent.db"),
         }
     }
 
@@ -191,12 +256,6 @@ impl Config {
         if let Some(s) = n.wake_max_wait_seconds {
             wake.max_wait = seconds("wake_max_wait_seconds", s)?;
         }
-        if let Some(p) = &n.claude_sessions_dir {
-            wake.claude_sessions_dir = expand(p, &self.home);
-        }
-        if let Some(p) = &n.codex_control_socket {
-            wake.codex_control_socket = expand(p, &self.home);
-        }
         if let Some(p) = &n.dsh_web_log {
             wake.dsh_web_log = expand(p, &self.home);
         }
@@ -214,7 +273,7 @@ impl Config {
     pub fn socket(&self) -> PathBuf {
         match &self.file.daemon.socket {
             Some(path) => expand(path, &self.home),
-            None => self.home.join(".local/state/xagent/xagentd.sock"),
+            None => self.state_dir.join("xagentd.sock"),
         }
     }
 
@@ -231,18 +290,17 @@ impl Config {
     /// Everything the daemon needs, with the NATS password read from its file.
     pub fn daemon(&self) -> Result<DaemonConfig> {
         let nats = &self.file.nats;
-        let auth = match (&nats.user, &nats.password_file) {
-            (Some(user), Some(file)) => {
-                let file = expand(file, &self.home);
+        let auth = match self.nats_credentials()? {
+            Some(NatsCredentials::Password { user, file }) => {
                 let password = std::fs::read_to_string(&file)
                     .with_context(|| format!("reading NATS password file {}", file.display()))?;
-                Some(UserPassword {
-                    user: user.clone(),
+                Some(NatsAuth::UserPassword(UserPassword {
+                    user,
                     password: password.trim().to_owned(),
-                })
+                }))
             }
-            (None, None) => None,
-            _ => anyhow::bail!("[nats] user and password_file go together"),
+            Some(NatsCredentials::CredentialsFile(file)) => Some(NatsAuth::CredentialsFile(file)),
+            None => None,
         };
         let host_id = match &self.file.host_id {
             Some(id) => id.clone(),
@@ -253,6 +311,10 @@ impl Config {
                 .unwrap_or_default()
                 .to_owned(),
         };
+        anyhow::ensure!(
+            xagent_proto::is_valid_host_id(&host_id),
+            "host_id {host_id:?} must be 1-64 of A-Z a-z 0-9 _ - (set host_id in the config)"
+        );
         let projects = self
             .file
             .projects
@@ -283,10 +345,11 @@ impl Config {
             nats: NatsSettings {
                 servers: nats.servers.clone(),
                 auth,
-                tls_ca: nats.tls_ca.as_deref().map(|p| expand(p, &self.home)),
+                tls_ca: self.nats_tls_ca(),
                 client_name: format!("xagentd@{host_id}"),
             },
             host_id,
+            home: self.home.clone(),
             socket: self.socket(),
             state_db: self.state_db(),
             wake: self.wake()?,

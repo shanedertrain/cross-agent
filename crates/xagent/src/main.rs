@@ -27,7 +27,8 @@ use xagent_core::client::Client;
     about = "Cross-agent messaging over NATS JetStream"
 )]
 struct Cli {
-    /// Config file (default: `$XAGENT_CONFIG`, then `~/.config/xagent/config.toml`).
+    /// Config file (default: `$XAGENT_CONFIG`, then `$XDG_CONFIG_HOME/xagent/config.toml`, where
+    /// `XDG_CONFIG_HOME` defaults to `~/.config`).
     #[arg(long, global = true)]
     config: Option<PathBuf>,
     #[command(subcommand)]
@@ -145,12 +146,17 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Show message retention: the broker's (shared by every host) and this host's local copies.
+    /// Show message retention and the stream's size cap: the broker's (shared by every host) and
+    /// this host's local copies.
     Retention {
-        /// Set the broker's retention to this many days, for every host. The broker deletes
-        /// messages older than that at once.
+        /// Set the broker's retention to this many days (1-3650), for every host. The broker
+        /// deletes messages older than that at once.
         #[arg(long)]
         days: Option<u32>,
+        /// Set the broker's stream size cap to this many MiB (1-1048576), for every host. At the
+        /// cap the broker deletes the oldest messages to make room (new streams: 1024).
+        #[arg(long)]
+        max_mb: Option<u32>,
     },
     /// Rebuild inboxes from JetStream: re-read the last N hours as unread.
     Recover {
@@ -390,7 +396,9 @@ async fn run_client(config: &Config, command: Command) -> Result<serde_json::Val
             as_session(config, session, Some(call)).await
         }
         Command::Gc { dry_run } => call(config, Call::Gc(Gc { dry_run })).await,
-        Command::Retention { days } => call(config, Call::Retention(Retention { days })).await,
+        Command::Retention { days, max_mb } => {
+            call(config, Call::Retention(Retention { days, max_mb })).await
+        }
         Command::Recover { hours, agents } => {
             call(config, Call::Recover(Recover { hours, agents })).await
         }

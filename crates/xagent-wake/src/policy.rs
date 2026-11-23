@@ -9,10 +9,11 @@
 
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
 use tokio::time::Instant;
 use tracing::{debug, info};
 use xagent_proto::{Client, Conversation};
@@ -35,10 +36,6 @@ pub struct WakeConfig {
     pub min_interval: Duration,
     /// A wake that finds no idle moment for this long is dropped.
     pub max_wait: Duration,
-    /// Claude Code's live-session registry (`<pid>.json` per interactive session).
-    pub claude_sessions_dir: PathBuf,
-    /// The shared Codex app-server's control socket.
-    pub codex_control_socket: PathBuf,
     /// dsh's local RPC endpoint (loopback only) and the launch log with its login token.
     pub dsh_url: String,
     pub dsh_web_log: PathBuf,
@@ -51,10 +48,62 @@ impl WakeConfig {
             enabled: true,
             min_interval: Duration::from_secs(120),
             max_wait: Duration::from_secs(1800),
-            claude_sessions_dir: home.join(".claude/sessions"),
-            codex_control_socket: home.join(".codex/app-server-control/app-server-control.sock"),
             dsh_url: "http://127.0.0.1:3080".to_owned(),
             dsh_web_log: home.join(".dsh/web.log"),
+        }
+    }
+}
+
+/// Where a conversation's client is reached: resolved from the client's own profile directory
+/// (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`), so a relocated profile is woken where it lives.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "client", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum Endpoint {
+    ClaudeCode {
+        /// The live-session registry (`<pid>.json` per interactive session).
+        sessions_dir: PathBuf,
+        /// The Claude process id when known (the registry is then read by pid, which survives a
+        /// `/clear`); the session-id scan is the fallback.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pid: Option<u32>,
+    },
+    Codex {
+        /// The shared app-server's control socket.
+        control_socket: PathBuf,
+    },
+    Dsh,
+}
+
+impl Endpoint {
+    /// Claude Code whose config directory (`CLAUDE_CONFIG_DIR`) is `config_dir`.
+    pub fn claude_code(config_dir: &Path, pid: Option<u32>) -> Self {
+        Self::ClaudeCode {
+            sessions_dir: config_dir.join("sessions"),
+            pid,
+        }
+    }
+
+    /// Codex whose home (`CODEX_HOME`) is `codex_home`.
+    pub fn codex(codex_home: &Path) -> Self {
+        Self::Codex {
+            control_socket: codex_home.join("app-server-control/app-server-control.sock"),
+        }
+    }
+
+    /// The client at its default profile directory (`~/.claude`, `~/.codex`) under `home`.
+    pub fn default_for(client: Client, home: &Path) -> Self {
+        match client {
+            Client::ClaudeCode => Self::claude_code(&home.join(".claude"), None),
+            Client::Codex => Self::codex(&home.join(".codex")),
+            Client::Dsh => Self::Dsh,
+        }
+    }
+
+    pub fn client(&self) -> Client {
+        match self {
+            Self::ClaudeCode { .. } => Client::ClaudeCode,
+            Self::Codex { .. } => Client::Codex,
+            Self::Dsh => Client::Dsh,
         }
     }
 }
@@ -66,12 +115,9 @@ pub struct Target {
     pub key: String,
     pub workspace: String,
     pub agent: String,
-    pub client: Client,
     /// The client's native conversation id: Claude session id, Codex thread id, dsh session id.
     pub conversation: Conversation,
-    /// The Claude process id when known (the registry is then read by pid, which survives a
-    /// `/clear`); the session-id scan is the fallback.
-    pub claude_pid: Option<u32>,
+    pub endpoint: Endpoint,
 }
 
 /// What the daemon tells the policy about a target.
@@ -107,8 +153,6 @@ struct KeyState {
 struct Inner {
     config: WakeConfig,
     source: Arc<dyn WakeSource>,
-    claude: ClaudeInbox,
-    codex: CodexAppServer,
     dsh: Dsh,
     state: Mutex<HashMap<String, KeyState>>,
 }
@@ -122,8 +166,6 @@ pub struct Waker {
 impl Waker {
     pub fn new(config: WakeConfig, source: Arc<dyn WakeSource>) -> Self {
         let inner = Inner {
-            claude: ClaudeInbox::new(config.claude_sessions_dir.clone()),
-            codex: CodexAppServer::new(config.codex_control_socket.clone()),
             dsh: Dsh::new(&config.dsh_url, config.dsh_web_log.clone()),
             config,
             source,
@@ -155,26 +197,40 @@ impl Inner {
     }
 
     fn reaches(&self, target: &Target) -> bool {
-        match target.client {
-            Client::ClaudeCode => ClaudeInbox::reaches(target),
-            Client::Codex => CodexAppServer::reaches(target),
-            Client::Dsh => self.dsh.reaches(target),
+        match &target.endpoint {
+            Endpoint::ClaudeCode { .. } => true,
+            Endpoint::Codex { .. } => CodexAppServer::reaches(target),
+            Endpoint::Dsh => self.dsh.reaches(target),
         }
     }
 
     async fn ready(&self, target: &Target) -> Readiness {
-        match target.client {
-            Client::ClaudeCode => self.claude.ready(target),
-            Client::Codex => self.codex.ready(target).await,
-            Client::Dsh => self.dsh.ready(target).await,
+        match &target.endpoint {
+            Endpoint::ClaudeCode { sessions_dir, pid } => {
+                ClaudeInbox::new(sessions_dir.clone()).ready(target, *pid)
+            }
+            Endpoint::Codex { control_socket } => {
+                CodexAppServer::new(control_socket.clone())
+                    .ready(target)
+                    .await
+            }
+            Endpoint::Dsh => self.dsh.ready(target).await,
         }
     }
 
     async fn send(&self, target: &Target, text: &str) -> bool {
-        match target.client {
-            Client::ClaudeCode => self.claude.send(target, text).await,
-            Client::Codex => self.codex.send(target, text).await,
-            Client::Dsh => self.dsh.send(target, text).await,
+        match &target.endpoint {
+            Endpoint::ClaudeCode { sessions_dir, pid } => {
+                ClaudeInbox::new(sessions_dir.clone())
+                    .send(target, *pid, text)
+                    .await
+            }
+            Endpoint::Codex { control_socket } => {
+                CodexAppServer::new(control_socket.clone())
+                    .send(target, text)
+                    .await
+            }
+            Endpoint::Dsh => self.dsh.send(target, text).await,
         }
     }
 

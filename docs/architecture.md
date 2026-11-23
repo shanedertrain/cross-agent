@@ -19,13 +19,13 @@ Dependencies point down: `xagent` → `xagent-mcp`, `xagent-core` → `xagent-wa
 ```text
 client ── stdio ── xagent mcp ── mcp.sock ──┐
 hook / CLI ──────────────────── xagentd.sock ┼─► xagent daemon ── NATS (TLS, user/password)
-                                             │        └ ~/.local/share/xagent/xagent.db
+                                             │        └ $XDG_DATA_HOME/xagent/xagent.db
 ```
 
 | Socket | Default | Carries |
 |---|---|---|
-| IPC | `~/.local/state/xagent/xagentd.sock` | Newline JSON requests: CLI, hooks, and the daemon side of each MCP connection |
-| MCP | `~/.local/state/xagent/mcp.sock` | One hello line, then MCP (newline JSON-RPC) per client connection |
+| IPC | `$XDG_STATE_HOME/xagent/xagentd.sock` (`~/.local/state` when unset) | Newline JSON requests: CLI, hooks, and the daemon side of each MCP connection |
+| MCP | `$XDG_STATE_HOME/xagent/mcp.sock` | One hello line, then MCP (newline JSON-RPC) per client connection |
 
 Both sockets live in a 0700 directory, are 0600, and the daemon refuses a peer with another uid. A live socket is never
 replaced. One daemon runs per host; hosts share only NATS.
@@ -53,7 +53,7 @@ sha256(`client` NUL `conversation`), always in the workspace `conversations`. `c
 
 | Client | Conversation id comes from |
 |---|---|
-| Claude Code | Live session record `~/.claude/sessions/<pid>.json` found by the Claude pid (follows `/clear`); `CLAUDE_CODE_SESSION_ID` as fallback |
+| Claude Code | Live session record `$CLAUDE_CONFIG_DIR/sessions/<pid>.json` (default `~/.claude`) found by the Claude pid (follows `/clear`); `CLAUDE_CODE_SESSION_ID` as fallback |
 | Codex | `_meta.threadId` on every tool call |
 | dsh | `XAGENT_CONVERSATION_ID` set by dsh at launch |
 
@@ -77,6 +77,10 @@ built from counts and the agent's own id. Peer text never reaches a client.
 | Codex | App-server control socket (WebSocket JSON-RPC): `turn/start` on a loaded, idle, non-ephemeral thread | Thread re-read just before sending |
 | dsh | dsh's local RPC: `session/prompt` in queue mode (loopback http; login token read from its launch log and exchanged per wake) | `session/list` `running` flag |
 
+Each client is reached in its own profile directory: the registry under `CLAUDE_CONFIG_DIR` and the control socket
+under `CODEX_HOME` as the MCP server's launch environment sets them (default `~/.claude`, `~/.codex`), carried from the
+hello through `window_open` into the session's wake target.
+
 Policy, shared: one pending wake per target; at most one per `wake_min_interval_seconds`; only for messages newer than
 the last wake; dropped after `wake_max_wait_seconds` without an idle moment; skipped when the counts fell to zero or the
 Stop hook already reported the same inbox state.
@@ -97,7 +101,7 @@ mirrors a Claude-to-Claude send onto the `sendmessage` topic, so the bus stays a
 | Model ↔ tools | No tool takes a sender, workspace or credential; the daemon derives them from the bound session |
 | Peer message ↔ model | Advisory data. Bodies and refs are never fetched or executed. Priority never raises authority |
 | Client ↔ daemon | Owner-only sockets, uid check; the relay forwards only the named launch environment (conversation, session ids, config dirs), never credentials |
-| Daemon ↔ NATS | User/password from a 0600 file; TLS with a private CA (`tls_ca`). The NATS user may publish and subscribe only `xagent.v1.>`, the four `XAGENT_*` KV buckets, JetStream API and `_INBOX` |
+| Daemon ↔ NATS | User/password from a 0600 file, or a JWT/NKey `.creds` file (`credentials_file`); TLS with a private CA (`tls_ca`). The NATS user may publish and subscribe only `xagent.v1.>`, the four `XAGENT_*` KV buckets, JetStream API and `_INBOX` |
 | Wake | Fixed text; dsh URL must be loopback because its login token is sent there |
 | Topics | Routing, not access control: everyone on the bus can read topic history. No secrets in messages |
 
@@ -109,5 +113,6 @@ mirrors a Claude-to-Claude send onto the `sendmessage` topic, so the bus stays a
 | Lease unconfirmed | `lease_pending`: no pulling, sends only while the last refresh is fresh |
 | Lease lost | `lease_lost`: the session can no longer act; restart it |
 | Stream or bucket incompatible | Daemon runs but reports not-ready (`xagent status`); it never modifies existing resources |
+| Duplicate `host_id` | The second daemon stays not ready (`nats.host_id_taken` in `xagent status`) until the first one's host lease ends; one that loses its host lease while running stops ([protocol](protocol.md#kv-records)) |
 | Daemon crash | Messages wait in JetStream (the broker's retention, 7 days by default); the next session of each agent resumes from its consumer. `xagent recover` rebuilds a lost SQLite |
-| Retention | The broker's retention is the stream's `max_age`: 7 days for a new stream, changed with `xagent retention --days N` for every host. Each host's `[retention] local_days` keeps local copies shorter, never longer; `gc` runs at start and hourly |
+| Retention | The broker's retention is the stream's `max_age`: 7 days for a new stream, changed with `xagent retention --days N` for every host. Its size cap is the stream's `max_bytes`: 1 GiB for a new stream, changed with `xagent retention --max-mb N`; at the cap the broker deletes the oldest messages. Daemons adopt both and never change them. Each host's `[retention] local_days` keeps local copies shorter, never longer; `gc` runs at start and hourly |

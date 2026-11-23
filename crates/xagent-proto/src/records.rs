@@ -46,6 +46,23 @@ pub struct LeaseRecord {
     pub ttl_seconds: f64,
 }
 
+/// `XAGENT_LEASES` value under [`host_lease_key`](crate::host_lease_key): proof that one daemon
+/// run owns a `host_id`, which scopes `xagent recover` and must be unique.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "schema", rename = "xagent.host_lease.v1")]
+pub struct HostLeaseRecord {
+    pub host_id: String,
+    pub daemon_run_id: String,
+    /// The machine the daemon runs on (`/etc/machine-id`), when known.
+    #[serde(default)]
+    pub machine_id: Option<String>,
+    /// The daemon's IPC socket on that machine.
+    pub socket: String,
+    pub acquired_at: String,
+    pub refreshed_at: String,
+    pub ttl_seconds: f64,
+}
+
 /// `XAGENT_TOPICS` value.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "schema", rename = "xagent.topic.v1")]

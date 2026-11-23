@@ -150,9 +150,8 @@ fn target_of(session: &Session) -> Target {
         key: session.agent.to_string(),
         workspace: WORKSPACE.to_owned(),
         agent: session.agent.to_string(),
-        client: session.client,
         conversation: session.conversation.clone(),
-        claude_pid: session.claude_pid,
+        endpoint: session.endpoint.clone(),
     }
 }
 

@@ -5,33 +5,31 @@ mod harness;
 
 use std::io::Read;
 use std::os::unix::net::UnixListener;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use harness::{HeldSession, Host, Nats, wait_for};
 use serde_json::{Value, json};
-use tempfile::TempDir;
 
 const TOKEN: &str = "0123456789abcdef0123456789abcdef";
 
-/// A Claude Code session as the daemon sees it: `~/.claude/sessions` files and an inbox socket
-/// whose received bytes are forwarded to `frames`. The record names this test process, which is
-/// alive and whose start time is read the way Claude records it.
+/// A Claude Code session as the daemon sees it: files in the host user's default
+/// `~/.claude/sessions` (sessions opened without an MCP window are woken there) and an inbox
+/// socket whose received bytes are forwarded to `frames`. The record names this test process,
+/// which is alive and whose start time is read the way Claude records it.
 struct FakeClaude {
-    dir: TempDir,
+    dir: PathBuf,
     conversation: String,
     socket: PathBuf,
     frames: Receiver<String>,
 }
 
 impl FakeClaude {
-    fn new(conversation: &str) -> Self {
-        let dir = tempfile::Builder::new()
-            .prefix("xa-claude")
-            .tempdir()
-            .expect("temp dir");
-        let socket = dir.path().join("cc.sock");
+    fn new(host: &Host, conversation: &str) -> Self {
+        let dir = host.dir().join("home/.claude/sessions");
+        std::fs::create_dir_all(&dir).expect("sessions dir");
+        let socket = dir.join("cc.sock");
         let listener = UnixListener::bind(&socket).expect("fake inbox socket");
         let (tx, frames) = channel();
         std::thread::spawn(move || {
@@ -56,7 +54,7 @@ impl FakeClaude {
         )
         .expect("key json");
         std::fs::write(
-            claude.dir.path().join(xagent_wake::key_file_name(
+            claude.dir.join(xagent_wake::key_file_name(
                 pid,
                 claude.socket.to_str().expect("utf8"),
             )),
@@ -65,10 +63,6 @@ impl FakeClaude {
         .expect("key file");
         claude.set_status("busy");
         claude
-    }
-
-    fn sessions_dir(&self) -> &Path {
-        self.dir.path()
     }
 
     /// Field 22 of `/proc/<pid>/stat`: the process start time in ticks.
@@ -97,21 +91,11 @@ impl FakeClaude {
             "statusUpdatedAt": now_ms - 10_000,
             "messagingSocketPath": self.socket,
         });
-        let tmp = self.dir.path().join("record.tmp");
+        let tmp = self.dir.join("record.tmp");
         std::fs::write(&tmp, record.to_string()).expect("record");
-        std::fs::rename(
-            tmp,
-            self.dir.path().join(format!("{}.json", std::process::id())),
-        )
-        .expect("record rename");
+        std::fs::rename(tmp, self.dir.join(format!("{}.json", std::process::id())))
+            .expect("record rename");
     }
-}
-
-fn notify_config(claude: &FakeClaude) -> String {
-    format!(
-        "[notify]\nclaude_sessions_dir = \"{}\"\n",
-        claude.sessions_dir().display()
-    )
 }
 
 /// Sends a DM from conversation `from` (a fresh codex session per call) to agent `to`.
@@ -139,8 +123,8 @@ fn wait_unread(session: &mut HeldSession, want: u64) {
 #[test]
 fn idle_claude_session_gets_one_framed_wake_and_busy_gets_none() {
     let nats = Nats::start();
-    let claude = FakeClaude::new("claude-wake-1");
-    let host = Host::start_with(&nats, "host-a", &notify_config(&claude));
+    let host = Host::start(&nats, "host-a");
+    let claude = FakeClaude::new(&host, "claude-wake-1");
     let mut bob = host
         .hold_as("claude-wake-1", "claude-code")
         .expect("session");
@@ -259,8 +243,8 @@ fn claude_stop_hook_blocks_once_per_state_and_is_silent_when_unbound() {
 #[test]
 fn doctor_reports_and_client_config_prints_hooks() {
     let nats = Nats::start();
-    let claude = FakeClaude::new("claude-doctor");
-    let mut host = Host::start_with(&nats, "host-a", &notify_config(&claude));
+    let mut host = Host::start(&nats, "host-a");
+    let _claude = FakeClaude::new(&host, "claude-doctor");
 
     let (code, report) = host.run_with_stdin(&["doctor"], "");
     assert_eq!(code, Some(0), "{report}");

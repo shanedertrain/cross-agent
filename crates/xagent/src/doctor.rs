@@ -3,14 +3,16 @@
 //! Local checks run directly, so a broken daemon does not hide a broken configuration and the
 //! other way round; broker health comes from the daemon's own status.
 
+use std::collections::BTreeSet;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde_json::Value;
 use xagent_core::protocol::Call;
-use xagent_wake::ClaudeInbox;
+
+use xagent_wake::{ClaudeInbox, Endpoint};
 
 use crate::config::Config;
 use xagent_core::client::Client;
@@ -102,7 +104,7 @@ fn local_checks(config: &Config, report: &mut Report) {
             "config",
             Verdict::Warn,
             "no config file; using defaults (nats://127.0.0.1:4222, no auth)",
-            "copy config.example.toml to ~/.config/xagent/config.toml",
+            "copy config.example.toml to $XDG_CONFIG_HOME/xagent/config.toml (default ~/.config)",
         ),
     }
     match config.wake() {
@@ -118,35 +120,38 @@ fn local_checks(config: &Config, report: &mut Report) {
         Err(err) => report.add("wake", Verdict::Fail, format!("{err:#}")),
     }
 
-    let (password_file, tls_ca) = config.nats_files();
-    match password_file {
-        None => report.add_fix(
+    match config.nats_credentials() {
+        Err(err) => report.add("nats credentials", Verdict::Fail, format!("{err:#}")),
+        Ok(None) => report.add_fix(
             "nats credentials",
             Verdict::Warn,
             "none configured (anonymous)",
-            "set [nats] user + password_file",
+            "set [nats] user + password_file, or credentials_file",
         ),
-        Some(path) => match owner_only(&path) {
-            None => report.add_fix(
-                "nats credentials",
-                Verdict::Fail,
-                format!("{} missing", path.display()),
-                "create it or fix the path in the config",
-            ),
-            Some(false) => report.add_fix(
-                "nats credentials",
-                Verdict::Warn,
-                format!("{} readable by group or others", path.display()),
-                format!("chmod 600 {}", path.display()),
-            ),
-            Some(true) => report.add(
-                "nats credentials",
-                Verdict::Pass,
-                format!("{} (0600)", path.display()),
-            ),
-        },
+        Ok(Some(credentials)) => {
+            let file = credentials.file();
+            match owner_only(file) {
+                None => report.add_fix(
+                    "nats credentials",
+                    Verdict::Fail,
+                    format!("{} missing", file.display()),
+                    "create it or fix the path in the config",
+                ),
+                Some(false) => report.add_fix(
+                    "nats credentials",
+                    Verdict::Warn,
+                    format!("{} readable by group or others", file.display()),
+                    format!("chmod 600 {}", file.display()),
+                ),
+                Some(true) => report.add(
+                    "nats credentials",
+                    Verdict::Pass,
+                    format!("{} (0600)", file.display()),
+                ),
+            }
+        }
     }
-    if let Some(ca) = tls_ca {
+    if let Some(ca) = config.nats_tls_ca() {
         let verdict = if ca.exists() {
             Verdict::Pass
         } else {
@@ -202,7 +207,8 @@ fn which_xagent() -> Option<String> {
         .map(|path| path.display().to_string())
 }
 
-async fn daemon_checks(config: &Config, report: &mut Report) {
+/// Checks the daemon and returns its status, when it answers.
+async fn daemon_checks(config: &Config, report: &mut Report) -> Option<Value> {
     let socket = config.socket();
     let status = match Client::connect(&socket).await {
         Ok(mut client) => client.call(Call::Status).await,
@@ -217,7 +223,7 @@ async fn daemon_checks(config: &Config, report: &mut Report) {
                 err.message,
                 "start it: `xagent daemon` (or the service unit)",
             );
-            return;
+            return None;
         }
     };
     report.add(
@@ -244,6 +250,13 @@ async fn daemon_checks(config: &Config, report: &mut Report) {
             "jetstream",
             Verdict::Pass,
             "stream and buckets present and compatible",
+        );
+    } else if let Some(taken) = nats["host_id_taken"].as_str() {
+        report.add_fix(
+            "host_id",
+            Verdict::Fail,
+            taken,
+            "set a unique host_id in this host's config, or stop the other daemon",
         );
     } else {
         let why = status["jetstream"]["fatal"].as_str().unwrap_or(
@@ -274,63 +287,64 @@ async fn daemon_checks(config: &Config, report: &mut Report) {
     }
     let sessions = status["sessions"].as_array().map_or(0, Vec::len);
     report.add("sessions", Verdict::Pass, format!("{sessions} open"));
+    Some(status)
 }
 
-fn wake_checks(config: &Config, report: &mut Report) {
+/// The Claude session registries and Codex control sockets to check: the clients' defaults, and
+/// those of the daemon's live sessions (a client whose profile directory was moved is woken there).
+fn wake_endpoints(
+    config: &Config,
+    status: Option<&Value>,
+) -> (BTreeSet<PathBuf>, BTreeSet<PathBuf>) {
+    let live = status
+        .and_then(|s| s["sessions"].as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|s| serde_json::from_value::<Endpoint>(s["endpoint"].clone()).ok());
+    let defaults = [
+        xagent_proto::Client::ClaudeCode,
+        xagent_proto::Client::Codex,
+    ]
+    .map(|c| Endpoint::default_for(c, config.home()));
+    let (mut claude, mut codex) = (BTreeSet::new(), BTreeSet::new());
+    for endpoint in defaults.into_iter().chain(live) {
+        match endpoint {
+            Endpoint::ClaudeCode { sessions_dir, .. } => {
+                claude.insert(sessions_dir);
+            }
+            Endpoint::Codex { control_socket } => {
+                codex.insert(control_socket);
+            }
+            Endpoint::Dsh => {}
+        }
+    }
+    (claude, codex)
+}
+
+fn wake_checks(config: &Config, status: Option<&Value>, report: &mut Report) {
     let Ok(wake) = config.wake() else { return };
     if !wake.enabled {
         report.add("claude inbox", Verdict::Skip, "wake disabled");
         return;
     }
-    match ClaudeInbox::new(wake.claude_sessions_dir.clone()).sessions() {
-        None => report.add(
-            "claude inbox",
-            Verdict::Skip,
-            format!(
-                "no Claude session registry at {}",
-                wake.claude_sessions_dir.display()
-            ),
-        ),
-        Some(sessions) if sessions.is_empty() => {
-            report.add("claude inbox", Verdict::Skip, "no live Claude sessions");
-        }
-        Some(sessions) => {
-            let lost: Vec<String> = sessions
-                .iter()
-                .filter(|s| !s.reachable)
-                .map(|s| s.name.clone().unwrap_or_else(|| s.pid.to_string()))
-                .collect();
-            if lost.is_empty() {
-                report.add(
-                    "claude inbox",
-                    Verdict::Pass,
-                    format!("{} live session(s), all reachable", sessions.len()),
-                );
-            } else {
-                report.add_fix(
-                    "claude inbox",
-                    Verdict::Warn,
-                    format!("{} of {} live session(s) have no usable inbox ({}); they are not woken, only the Stop hook reaches them", lost.len(), sessions.len(), lost.join(", ")),
-                    "Claude changed its inbox, or the session predates it: restart the session",
-                );
-            }
-        }
+    let (claude, codex) = wake_endpoints(config, status);
+    for dir in &claude {
+        claude_check(dir, report);
     }
-    if wake.codex_control_socket.exists() {
-        report.add(
-            "codex app-server",
-            Verdict::Pass,
-            wake.codex_control_socket.display().to_string(),
-        );
-    } else {
-        report.add(
-            "codex app-server",
-            Verdict::Skip,
-            format!(
-                "no control socket at {}",
-                wake.codex_control_socket.display()
-            ),
-        );
+    for socket in &codex {
+        if socket.exists() {
+            report.add(
+                "codex app-server",
+                Verdict::Pass,
+                socket.display().to_string(),
+            );
+        } else {
+            report.add(
+                "codex app-server",
+                Verdict::Skip,
+                format!("no control socket at {}", socket.display()),
+            );
+        }
     }
     if wake.dsh_web_log.exists() {
         report.add(
@@ -347,12 +361,53 @@ fn wake_checks(config: &Config, report: &mut Report) {
     }
 }
 
+/// The live sessions of one Claude session registry and whether each inbox is reachable.
+fn claude_check(dir: &Path, report: &mut Report) {
+    match ClaudeInbox::new(dir.to_owned()).sessions() {
+        None => report.add(
+            "claude inbox",
+            Verdict::Skip,
+            format!("no Claude session registry at {}", dir.display()),
+        ),
+        Some(sessions) if sessions.is_empty() => report.add(
+            "claude inbox",
+            Verdict::Skip,
+            format!("no live Claude sessions in {}", dir.display()),
+        ),
+        Some(sessions) => {
+            let lost: Vec<String> = sessions
+                .iter()
+                .filter(|s| !s.reachable)
+                .map(|s| s.name.clone().unwrap_or_else(|| s.pid.to_string()))
+                .collect();
+            if lost.is_empty() {
+                report.add(
+                    "claude inbox",
+                    Verdict::Pass,
+                    format!(
+                        "{} live session(s) in {}, all reachable",
+                        sessions.len(),
+                        dir.display()
+                    ),
+                );
+            } else {
+                report.add_fix(
+                    "claude inbox",
+                    Verdict::Warn,
+                    format!("{} of {} live session(s) have no usable inbox ({}); they are not woken, only the Stop hook reaches them", lost.len(), sessions.len(), lost.join(", ")),
+                    "Claude changed its inbox, or the session predates it: restart the session",
+                );
+            }
+        }
+    }
+}
+
 /// Runs every check, prints the report, and returns whether none failed.
 pub async fn run(config: &Config) -> bool {
     let mut report = Report::default();
     local_checks(config, &mut report);
-    daemon_checks(config, &mut report).await;
-    wake_checks(config, &mut report);
+    let status = daemon_checks(config, &mut report).await;
+    wake_checks(config, status.as_ref(), &mut report);
     for check in &report.0 {
         print!(
             "{}  {:<18} {}",

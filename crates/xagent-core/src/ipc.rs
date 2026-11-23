@@ -175,13 +175,13 @@ impl Connection {
                         "cwd must be an absolute path",
                     ));
                 }
-                let claude_pid = self.window.and_then(|w| daemon.window_claude_pid(w));
+                let endpoint = self.window.and_then(|w| daemon.window_endpoint(w));
                 let session = daemon
                     .open_session(
                         params.conversation,
                         params.client,
                         params.cwd.as_deref(),
-                        claude_pid,
+                        endpoint,
                     )
                     .await?;
                 let whoami = Daemon::whoami(&session);
@@ -210,7 +210,7 @@ impl Connection {
             Call::MessageReply(params) => daemon.message_reply(self.bound(), params).await,
             Call::ThreadRead(params) => daemon.thread_read(self.bound(), &params),
             Call::Gc(params) => daemon.gc(params.dry_run).await,
-            Call::Retention(params) => daemon.retention(params.days).await,
+            Call::Retention(params) => daemon.retention(params).await,
             Call::Recover(params) => daemon.recover(params).await,
         }
     }

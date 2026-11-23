@@ -24,9 +24,10 @@ const LEASE_TTL: Duration = Duration::from_secs(30);
 const HEADER_SLACK_BYTES: usize = 1024;
 /// An existing stream must accept at least the envelope cap plus this much header room.
 const MIN_HEADER_ROOM_BYTES: usize = 128;
-const MAX_BYTES: i64 = 1 << 30;
+/// Size cap of a newly created message stream (1 GiB).
+const DEFAULT_MAX_BYTES: i64 = 1 << 30;
 /// Retention of a newly created message stream.
-pub const DEFAULT_RETENTION: Duration = Duration::from_secs(7 * 86_400);
+const DEFAULT_RETENTION: Duration = Duration::from_secs(7 * 86_400);
 const DUPLICATE_WINDOW: Duration = Duration::from_secs(600);
 /// KV duplicate window, as the NATS clients set it: two minutes, or the TTL if shorter.
 const KV_DUPLICATE_WINDOW: Duration = Duration::from_secs(120);
@@ -59,7 +60,7 @@ pub struct BootstrapReport {
     pub mismatches: Vec<Mismatch>,
 }
 
-fn expected_stream(retention: Duration) -> Config {
+fn expected_stream() -> Config {
     Config {
         name: STREAM.to_owned(),
         description: Some("xagent v1 chat and direct messages".to_owned()),
@@ -67,8 +68,8 @@ fn expected_stream(retention: Duration) -> Config {
         retention: RetentionPolicy::Limits,
         storage: StorageType::File,
         num_replicas: 1,
-        max_age: retention,
-        max_bytes: MAX_BYTES,
+        max_age: DEFAULT_RETENTION,
+        max_bytes: DEFAULT_MAX_BYTES,
         max_message_size: i32::try_from(DEFAULT_MAX_MESSAGE_BYTES + HEADER_SLACK_BYTES)
             .expect("stream message size fits i32"),
         discard: DiscardPolicy::Old,
@@ -166,13 +167,6 @@ fn compare_stream_limits(expected: &Config, actual: &Config) -> Vec<Mismatch> {
             "a positive cap",
             actual.max_bytes,
             true,
-        ));
-    } else if actual.max_bytes != expected.max_bytes {
-        out.push(stream_mismatch(
-            "max_bytes",
-            expected.max_bytes,
-            actual.max_bytes,
-            false,
         ));
     }
     if actual.num_replicas != expected.num_replicas {
@@ -273,9 +267,9 @@ async fn ensure_stream(
 /// [`BusError::Incompatible`] if a resource has a fatal mismatch; [`BusError::Nats`] otherwise.
 pub(crate) async fn bootstrap(js: jetstream::Context) -> Result<(Bus, BootstrapReport), BusError> {
     let mut report = BootstrapReport::default();
-    // A new stream keeps messages for the default retention; an existing stream's `max_age` is the
-    // operator's choice (`Bus::set_retention`) and is not compared.
-    let expected = expected_stream(DEFAULT_RETENTION);
+    // A new stream starts with the default limits; an existing stream's `max_age` and `max_bytes`
+    // are the operator's choice (`Bus::set_stream_limits`) and are not compared.
+    let expected = expected_stream();
     if let Some(actual) = ensure_stream(&js, expected.clone(), &mut report).await? {
         report.mismatches.extend(compare_stream(&expected, &actual));
     }

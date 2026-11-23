@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -13,6 +13,7 @@ use xagent_proto::{
     AgentId, Client, Conversation, Error, ErrorCode, WORKSPACE, conversation_agent_id, now_ts,
 };
 use xagent_store::{Store, StoreError};
+use xagent_wake::Endpoint;
 
 use crate::session::{EndReason, LeaseTiming, RefreshOutcome, Session};
 
@@ -27,6 +28,9 @@ const REFRESH_SLACK: Duration = Duration::from_millis(3500);
 #[derive(Debug, Clone)]
 pub struct DaemonConfig {
     pub host_id: String,
+    /// The daemon user's home: the clients' default profile directories (`~/.claude`, `~/.codex`)
+    /// for a session opened without a window.
+    pub home: PathBuf,
     pub nats: NatsSettings,
     pub socket: PathBuf,
     pub state_db: PathBuf,
@@ -53,6 +57,8 @@ pub(crate) enum Readiness {
     Ready(BootstrapReport),
     /// A fatal mismatch: the message pipeline will not run until an operator fixes it.
     Incompatible(String),
+    /// Another live daemon holds this host's `host_id`; retried until its lease ends.
+    HostIdTaken(String),
 }
 
 /// The shared daemon state. Cheap to clone handles live in `Arc<Daemon>`.
@@ -64,13 +70,16 @@ pub(crate) struct Daemon {
     store: Mutex<Store>,
     pub(crate) connection: Connection,
     bus: OnceCell<Bus>,
-    readiness: Mutex<Readiness>,
+    pub(crate) readiness: Mutex<Readiness>,
     sessions: Mutex<HashMap<AgentId, Arc<Session>>>,
     pub(crate) outbox_kick: Notify,
     pub(crate) waker: xagent_wake::Waker,
     pub(crate) reach_cache: Mutex<Option<crate::messaging::ReachCache>>,
     pub(crate) windows: Mutex<crate::windows::Windows>,
     pub(crate) peek_kick: Notify,
+    /// Why the daemon must stop (its host lease was taken over); `fatal_kick` signals it.
+    pub(crate) fatal: OnceLock<String>,
+    pub(crate) fatal_kick: Notify,
 }
 
 pub(crate) fn internal(err: &StoreError) -> Error {
@@ -115,6 +124,8 @@ impl Daemon {
             reach_cache: Mutex::new(None),
             windows: Mutex::default(),
             peek_kick: Notify::new(),
+            fatal: OnceLock::new(),
+            fatal_kick: Notify::new(),
         })
     }
 
@@ -153,18 +164,19 @@ impl Daemon {
             .find(|s| s.instance_id.to_string() == instance_id)
     }
 
-    /// Bootstraps JetStream once NATS is reachable; retries until it succeeds or finds a fatal
-    /// mismatch.
+    /// Bootstraps JetStream once NATS is reachable and takes the host lease, retrying until it
+    /// succeeds or finds a fatal mismatch; then keeps the host lease until the daemon stops.
     pub(crate) async fn bootstrap_loop(self: Arc<Self>) {
         loop {
             match self.connection.bootstrap().await {
                 Ok((bus, report)) => {
-                    self.bus.set(bus).expect("bootstrap succeeds once");
+                    let revision = self.acquire_host(&bus).await;
+                    self.bus.set(bus.clone()).expect("bootstrap succeeds once");
                     *self.readiness.lock().expect("readiness lock poisoned") =
                         Readiness::Ready(report);
                     info!("nats ready");
                     self.outbox_kick.notify_one();
-                    return;
+                    return self.keep_host_lease(bus, revision).await;
                 }
                 Err(BusError::Incompatible(mismatches)) => {
                     for m in &mismatches {
@@ -187,7 +199,8 @@ impl Daemon {
         }
     }
 
-    /// Binds a session to `conversation`: derives its agent id, takes the lease, registers the
+    /// Binds a session to `conversation`, woken at `endpoint` (the window's; the client's default
+    /// when it has none or names another client): derives its agent id, takes the lease, registers the
     /// agent, ensures its durable consumer, and starts lease keeping and receiving.
     ///
     /// # Errors
@@ -199,9 +212,12 @@ impl Daemon {
         conversation: Conversation,
         client: Client,
         cwd: Option<&Path>,
-        claude_pid: Option<u32>,
+        endpoint: Option<Endpoint>,
     ) -> Result<Arc<Session>, Error> {
         let agent = conversation_agent_id(client, &conversation);
+        let endpoint = endpoint
+            .filter(|e| e.client() == client)
+            .unwrap_or_else(|| Endpoint::default_for(client, &self.config.home));
         let bus = self.require_bus("starting a session")?.clone();
         let session = loop {
             let closing = {
@@ -224,7 +240,7 @@ impl Daemon {
                             agent.clone(),
                             client,
                             conversation.clone(),
-                            claude_pid,
+                            endpoint,
                             LeaseTiming::new(bus.lease_ttl()),
                         ));
                         // Reserved before awaiting, so a concurrent open on this host fails at once.

@@ -3,18 +3,23 @@
 # and a random password shared with xagent via a 0600 file. Loopback and plain TCP by default.
 # With --tls it also makes a private CA and a server certificate (ECDSA P-256) in the
 # strict-X.509 form rustls requires, and the server listens with TLS.
+# Uses DIR/bin/nats-server, else a nats-server on PATH (a distro package), else downloads it to
+# DIR/bin; the systemd user unit nats-server.service runs the one used.
 # Never overwrites an existing config, password or key.
 #
-#   scripts/setup-nats.sh [--version v2.14.6] [--listen 127.0.0.1:4222]
-#                         [--tls [--san DNS_OR_IP]...]
+#   scripts/setup-nats.sh [--prefix DIR] [--version v2.14.6] [--listen 127.0.0.1:4222]
+#                         [--tls [--san DNS_OR_IP]...]          (default DIR: ~/.local)
 set -euo pipefail
 
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PREFIX="$HOME/.local"
 VERSION="v2.14.6"
 LISTEN="127.0.0.1:4222"
 TLS=0
 SANS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --prefix) PREFIX="$2"; shift 2 ;;
     --version) VERSION="$2"; shift 2 ;;
     --listen) LISTEN="$2"; shift 2 ;;
     --tls) TLS=1; shift ;;
@@ -23,13 +28,19 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-BIN="$HOME/.local/bin"
-CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/xagent"
-DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/xagent/nats"
+BIN="$PREFIX/bin"
+# XDG base directory: $1 when it is an absolute path (the spec ignores relative ones), else ~/$2.
+xdg() { local dir="${!1:-}"; [[ "$dir" == /* ]] || dir="$HOME/$2"; printf '%s\n' "$dir"; }
+CONF_DIR="$(xdg XDG_CONFIG_HOME .config)/xagent"
+DATA_DIR="$(xdg XDG_DATA_HOME .local/share)/xagent/nats"
 mkdir -p "$BIN" "$CONF_DIR" "$DATA_DIR"
 chmod 700 "$CONF_DIR" "$DATA_DIR"
 
-if ! command -v nats-server >/dev/null 2>&1; then
+if [[ -x "$BIN/nats-server" ]]; then
+  NATS_SERVER="$BIN/nats-server"
+elif command -v nats-server >/dev/null 2>&1; then
+  NATS_SERVER="$(readlink -f "$(command -v nats-server)")"
+else
   arch="$(uname -m)"; case "$arch" in x86_64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; esac
   os="$(uname -s | tr '[:upper:]' '[:lower:]')"
   name="nats-server-${VERSION}-${os}-${arch}"
@@ -42,9 +53,9 @@ if ! command -v nats-server >/dev/null 2>&1; then
   tar -xzf "$tmp/$name.tar.gz" -C "$tmp"
   install -m 0755 "$tmp/$name/nats-server" "$BIN/nats-server"
   echo "==> installed $BIN/nats-server"
-else
-  echo "==> using $(command -v nats-server) ($(nats-server --version))"
+  NATS_SERVER="$BIN/nats-server"
 fi
+echo "==> using $NATS_SERVER ($("$NATS_SERVER" --version))"
 
 PW_FILE="$CONF_DIR/nats.password"
 if [[ ! -f "$PW_FILE" ]]; then
@@ -135,13 +146,19 @@ else
   echo "==> kept existing $NATS_CONF"
 fi
 
+UNIT_DIR="$(xdg XDG_CONFIG_HOME .config)/systemd/user"
+mkdir -p "$UNIT_DIR"
+sed "s|^ExecStart=.*|ExecStart=$NATS_SERVER -c $NATS_CONF|" "$REPO/deploy/systemd/nats-server.service" \
+  > "$UNIT_DIR/nats-server.service"
+echo "==> installed $UNIT_DIR/nats-server.service (ExecStart=$NATS_SERVER -c $NATS_CONF)"
+
 cat <<EOF
-Set in ~/.config/xagent/config.toml:
+Set in $CONF_DIR/config.toml:
   [nats]
   servers = ["$SCHEME://$LISTEN"]
   user = "xagent"
   password_file = "$PW_FILE"
 EOF
 if [[ $TLS -eq 1 ]]; then
-  echo '  tls_ca = "~/.config/xagent/pki/ca.pem"   # copy ca.pem to every other host'
+  echo "  tls_ca = \"$CONF_DIR/pki/ca.pem\"   # copy ca.pem to every other host"
 fi
