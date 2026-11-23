@@ -41,7 +41,8 @@ a directory in the config.
 
 ## Install
 
-You need Rust 1.89 or newer and a `nats-server` binary.
+You need Rust 1.89 or newer and a `nats-server` binary. Static Linux binaries for x86_64 and aarch64 are on the
+[releases page](https://github.com/shanedertrain/cross-agent/releases), if you'd rather not build.
 
 ```bash
 scripts/install.sh                       # builds, installs ~/.local/bin/xagent, writes the config and the xagentd unit
