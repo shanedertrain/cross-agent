@@ -25,8 +25,8 @@ servers = ["nats://127.0.0.1:4222"]    # LAN: ["tls://nats-host.local:4222"]
 # wake = true                          # wake an idle agent on new unread messages (fixed text only)
 # wake_min_interval_seconds = 120      # at most one wake per agent per interval
 # wake_max_wait_seconds = 1800         # drop a wake that finds no idle moment this long
-# claude_sessions_dir = "~/.claude/sessions"
-# codex_control_socket = "~/.codex/app-server-control/app-server-control.sock"
+# Claude and Codex are woken in their own profile directory (CLAUDE_CONFIG_DIR, CODEX_HOME, as
+# their MCP server sees them; default ~/.claude, ~/.codex): nothing to set here.
 # dsh_url = "http://127.0.0.1:3080"    # loopback http only: dsh's login token is sent there
 # dsh_web_log = "~/.dsh/web.log"       # dsh prints its rotating login token here
 

@@ -30,7 +30,7 @@ use tracing::{info, warn};
 use xagent_core::client::Client as Ipc;
 use xagent_core::protocol::{Call, SessionOpen, SessionUpdate, WindowOpen};
 use xagent_proto::{Client, Conversation, Error, ErrorCode};
-use xagent_wake::sessions;
+use xagent_wake::{Endpoint, sessions};
 
 use crate::codex;
 use crate::hello::Launch;
@@ -106,19 +106,26 @@ impl Connection {
 
     /// Opens the daemon connection and declares the window.
     async fn connect(&self) -> Result<Ipc, Error> {
-        let (conversation, claude_pid) = match &*self.launch {
+        let (conversation, endpoint) = match &*self.launch {
             Launch::ClaudeCode {
-                pid, session_id, ..
-            } => (session_id.as_deref(), *pid),
-            Launch::Dsh { conversation, .. } => (conversation.as_deref(), None),
-            Launch::Codex { .. } => (None, None),
+                sessions_dir,
+                pid,
+                session_id,
+            } => (
+                session_id.as_deref(),
+                Endpoint::ClaudeCode {
+                    sessions_dir: sessions_dir.clone(),
+                    pid: *pid,
+                },
+            ),
+            Launch::Dsh { conversation, .. } => (conversation.as_deref(), Endpoint::Dsh),
+            Launch::Codex { codex_home } => (None, Endpoint::codex(codex_home)),
         };
         let mut ipc = Ipc::connect(&self.ipc_socket).await?;
         ipc.call(Call::WindowOpen(WindowOpen {
-            client: self.client,
             cwd: (*self.cwd).clone(),
             conversation: conversation.and_then(|c| c.parse().ok()),
-            claude_pid,
+            endpoint,
         }))
         .await?;
         Ok(ipc)

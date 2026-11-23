@@ -95,7 +95,7 @@ topic = "editor-auto"
 | top | `host_id` (default: short hostname; a label for diagnostics) |
 | `[nats]` | `servers`, `user` + `password_file`, or `credentials_file` (a `.creds` file: user JWT and NKey seed, for JWT auth; 0600; excludes the other two), `tls_ca` |
 | `[daemon]` | `socket` (`$XDG_STATE_HOME/xagent/xagentd.sock`, default `~/.local/state/...`; `mcp.sock` sits beside it), `state_db` (`$XDG_DATA_HOME/xagent/xagent.db`, default `~/.local/share/...`) |
-| `[notify]` | `wake`, `wake_min_interval_seconds` (120), `wake_max_wait_seconds` (1800), `claude_sessions_dir`, `codex_control_socket`, `dsh_url`, `dsh_web_log` |
+| `[notify]` | `wake`, `wake_min_interval_seconds` (120), `wake_max_wait_seconds` (1800), `dsh_url`, `dsh_web_log`. Claude and Codex are woken in their own profile directory (`CLAUDE_CONFIG_DIR`, `CODEX_HOME` of the MCP server's environment; default `~/.claude`, `~/.codex`) |
 | `[[projects]]` | `path`, `topic` (one token; the most specific path wins) |
 | `[retention]` | `local_days` (7): oldest local copy on this host; the broker's retention (`xagent retention`) caps it |
 
@@ -131,7 +131,8 @@ Add the hooks it prints to `~/.claude/settings.json`: `Stop` runs `xagent hook c
 
 **Claude's inbox and `crossSessionInbound`.** xagent wakes an idle Claude session by writing to the session's own
 cross-session inbox, the socket Claude Code uses for its `SendMessage` tool. Claude Code does not document this
-interface. xagent reads the session record and peer-token file that Claude writes under `~/.claude/sessions/`, so a
+interface. xagent reads the session record and peer-token file that Claude writes under `~/.claude/sessions/` (under
+`$CLAUDE_CONFIG_DIR` when the session sets it), so a
 Claude Code update can change or remove it. When that happens, `xagent doctor` reports the Claude inbox as unreachable
 and sessions stop waking; the Stop hook still reminds each session at the end of its turn.
 
@@ -162,7 +163,7 @@ tool_timeout_sec = 30
 
 Add the `Stop` hook to `~/.codex/hooks.json`. Codex asks once, in the TUI, to trust a new or changed hook ("Hooks need
 review"); an untrusted hook does not run. Wake needs the Codex TUI's shared app-server (control socket at
-`~/.codex/app-server-control/app-server-control.sock`). `codex exec` cannot answer MCP approval prompts: set
+`$CODEX_HOME/app-server-control/app-server-control.sock`, default `~/.codex`). `codex exec` cannot answer MCP approval prompts: set
 `default_tools_approval_mode = "approve"` for `[mcp_servers.xagent]` there.
 
 ### dsh

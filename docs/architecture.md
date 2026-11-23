@@ -53,7 +53,7 @@ sha256(`client` NUL `conversation`), always in the workspace `conversations`. `c
 
 | Client | Conversation id comes from |
 |---|---|
-| Claude Code | Live session record `~/.claude/sessions/<pid>.json` found by the Claude pid (follows `/clear`); `CLAUDE_CODE_SESSION_ID` as fallback |
+| Claude Code | Live session record `$CLAUDE_CONFIG_DIR/sessions/<pid>.json` (default `~/.claude`) found by the Claude pid (follows `/clear`); `CLAUDE_CODE_SESSION_ID` as fallback |
 | Codex | `_meta.threadId` on every tool call |
 | dsh | `XAGENT_CONVERSATION_ID` set by dsh at launch |
 
@@ -76,6 +76,10 @@ built from counts and the agent's own id. Peer text never reaches a client.
 | Claude Code | Native cross-session inbox (undocumented by Claude Code; may change with an update): the Unix socket in the session record (`messagingSocketPath`) with the peer token from `<pid>.<sha256(socket)>.key`; frames are an auth line then a `<cross-session-message from-name="xagent">` user message | Session record `status: idle` for 3 s |
 | Codex | App-server control socket (WebSocket JSON-RPC): `turn/start` on a loaded, idle, non-ephemeral thread | Thread re-read just before sending |
 | dsh | dsh's local RPC: `session/prompt` in queue mode (loopback http; login token read from its launch log and exchanged per wake) | `session/list` `running` flag |
+
+Each client is reached in its own profile directory: the registry under `CLAUDE_CONFIG_DIR` and the control socket
+under `CODEX_HOME` as the MCP server's launch environment sets them (default `~/.claude`, `~/.codex`), carried from the
+hello through `window_open` into the session's wake target.
 
 Policy, shared: one pending wake per target; at most one per `wake_min_interval_seconds`; only for messages newer than
 the last wake; dropped after `wake_max_wait_seconds` without an idle moment; skipped when the counts fell to zero or the

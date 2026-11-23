@@ -18,10 +18,8 @@ use std::sync::{Arc, MutexGuard};
 use std::time::Duration;
 
 use tracing::debug;
-use xagent_proto::{
-    AgentId, Client, Conversation, Error, ErrorCode, WORKSPACE, conversation_agent_id,
-};
-use xagent_wake::{CodexAppServer, Target, sessions};
+use xagent_proto::{AgentId, Conversation, Error, ErrorCode, WORKSPACE, conversation_agent_id};
+use xagent_wake::{CodexAppServer, Endpoint, Target, sessions};
 
 use crate::daemon::Daemon;
 use crate::protocol::WindowOpen;
@@ -45,28 +43,16 @@ fn real(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned())
 }
 
-fn target(client: Client, conversation: Conversation, claude_pid: Option<u32>) -> Target {
-    let agent = conversation_agent_id(client, &conversation).to_string();
-    Target {
-        key: agent.clone(),
-        workspace: WORKSPACE.to_owned(),
-        agent,
-        client,
-        conversation,
-        claude_pid,
-    }
-}
-
 /// Adds the window target of `conversation` (the first window of an identity wins).
-fn add(
-    targets: &mut BTreeMap<AgentId, Target>,
-    client: Client,
-    conversation: Conversation,
-    claude_pid: Option<u32>,
-) {
-    targets
-        .entry(conversation_agent_id(client, &conversation))
-        .or_insert_with(|| target(client, conversation, claude_pid));
+fn add(targets: &mut BTreeMap<AgentId, Target>, conversation: Conversation, endpoint: &Endpoint) {
+    let agent = conversation_agent_id(endpoint.client(), &conversation);
+    targets.entry(agent.clone()).or_insert_with(|| Target {
+        key: agent.to_string(),
+        workspace: WORKSPACE.to_owned(),
+        agent: agent.to_string(),
+        conversation,
+        endpoint: endpoint.clone(),
+    });
 }
 
 impl Daemon {
@@ -96,8 +82,8 @@ impl Daemon {
         self.windows().open.remove(&id);
     }
 
-    pub(crate) fn window_claude_pid(&self, id: WindowId) -> Option<u32> {
-        self.windows().open.get(&id)?.claude_pid
+    pub(crate) fn window_endpoint(&self, id: WindowId) -> Option<Endpoint> {
+        Some(self.windows().open.get(&id)?.endpoint.clone())
     }
 
     /// Messages waiting for `agent`, the identity of an unbound window, at the last peek.
@@ -134,22 +120,22 @@ impl Daemon {
             .collect();
         let mut targets = BTreeMap::new();
         for window in &windows {
-            let conversation = match window.client {
-                Client::Codex => continue,
-                Client::Dsh => window.conversation.clone(),
-                Client::ClaudeCode => sessions::find_record(
-                    &self.config.wake.claude_sessions_dir,
-                    window.claude_pid,
+            let conversation = match &window.endpoint {
+                Endpoint::Codex { .. } => continue,
+                Endpoint::Dsh => window.conversation.clone(),
+                Endpoint::ClaudeCode { sessions_dir, pid } => sessions::find_record(
+                    sessions_dir,
+                    *pid,
                     window.conversation.as_ref().map(Conversation::as_str),
                 )
                 .and_then(|record| record.session_id?.parse().ok()),
             };
             if let Some(conversation) = conversation {
-                add(&mut targets, window.client, conversation, window.claude_pid);
+                add(&mut targets, conversation, &window.endpoint);
             }
         }
-        for thread in self.codex_threads(&windows).await {
-            add(&mut targets, Client::Codex, thread, None);
+        for (thread, endpoint) in self.codex_threads(&windows).await {
+            add(&mut targets, thread, &endpoint);
         }
         targets.retain(|agent, _| !live.contains(agent));
 
@@ -177,31 +163,44 @@ impl Daemon {
         }
     }
 
-    /// The user threads of the shared Codex app-server loaded in the directory of a Codex window.
-    async fn codex_threads(&self, windows: &[WindowOpen]) -> Vec<Conversation> {
-        let dirs: HashSet<PathBuf> = windows
-            .iter()
-            .filter(|w| w.client == Client::Codex)
-            .map(|w| real(&w.cwd))
-            .collect();
-        let socket = &self.config.wake.codex_control_socket;
-        if dirs.is_empty() || !socket.exists() {
-            return Vec::new();
-        }
-        match CodexAppServer::new(socket.clone())
-            .loaded_user_threads()
-            .await
-        {
-            Ok(threads) => threads
-                .into_iter()
-                .filter(|t| dirs.contains(&real(&t.cwd)))
-                .filter_map(|t| t.id.parse().ok())
-                .collect(),
-            Err(err) => {
-                debug!(error = %err, "codex thread discovery failed");
-                Vec::new()
+    /// The user threads loaded in the directory of a Codex window, asked of the shared
+    /// app-server of that window's Codex home; each with the endpoint it is woken at.
+    async fn codex_threads(&self, windows: &[WindowOpen]) -> Vec<(Conversation, Endpoint)> {
+        let mut dirs: HashMap<&PathBuf, HashSet<PathBuf>> = HashMap::new();
+        for window in windows {
+            if let Endpoint::Codex { control_socket } = &window.endpoint {
+                dirs.entry(control_socket)
+                    .or_default()
+                    .insert(real(&window.cwd));
             }
         }
+        let mut found = Vec::new();
+        for (socket, dirs) in dirs {
+            if !socket.exists() {
+                continue;
+            }
+            let threads = match CodexAppServer::new(socket.clone())
+                .loaded_user_threads()
+                .await
+            {
+                Ok(threads) => threads,
+                Err(err) => {
+                    debug!(error = %err, socket = %socket.display(), "codex thread discovery failed");
+                    continue;
+                }
+            };
+            let endpoint = Endpoint::Codex {
+                control_socket: socket.clone(),
+            };
+            found.extend(
+                threads
+                    .into_iter()
+                    .filter(|t| dirs.contains(&real(&t.cwd)))
+                    .filter_map(|t| t.id.parse().ok())
+                    .map(|thread| (thread, endpoint.clone())),
+            );
+        }
+        found
     }
 
     /// Messages for an identity nobody holds: unread here, plus what its durable consumer still

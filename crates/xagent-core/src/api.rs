@@ -176,6 +176,8 @@ pub(crate) struct SendView {
 struct SessionView {
     agent_id: String,
     client: &'static str,
+    /// Where the session is woken (`xagent doctor` checks these).
+    endpoint: xagent_wake::Endpoint,
     instance_id: String,
     lease: &'static str,
     authority_s: f64,
@@ -203,6 +205,7 @@ impl Daemon {
             .map(|s| SessionView {
                 agent_id: s.agent.to_string(),
                 client: s.client.as_str(),
+                endpoint: s.endpoint.clone(),
                 instance_id: s.instance_id.to_string(),
                 lease: s.phase().as_str(),
                 authority_s: (s.authority_remaining().as_secs_f64() * 10.0).round() / 10.0,

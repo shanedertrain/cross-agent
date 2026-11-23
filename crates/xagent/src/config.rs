@@ -59,8 +59,6 @@ struct NotifySection {
     wake: Option<bool>,
     wake_min_interval_seconds: Option<f64>,
     wake_max_wait_seconds: Option<f64>,
-    claude_sessions_dir: Option<PathBuf>,
-    codex_control_socket: Option<PathBuf>,
     dsh_url: Option<String>,
     dsh_web_log: Option<PathBuf>,
 }
@@ -258,12 +256,6 @@ impl Config {
         if let Some(s) = n.wake_max_wait_seconds {
             wake.max_wait = seconds("wake_max_wait_seconds", s)?;
         }
-        if let Some(p) = &n.claude_sessions_dir {
-            wake.claude_sessions_dir = expand(p, &self.home);
-        }
-        if let Some(p) = &n.codex_control_socket {
-            wake.codex_control_socket = expand(p, &self.home);
-        }
         if let Some(p) = &n.dsh_web_log {
             wake.dsh_web_log = expand(p, &self.home);
         }
@@ -353,6 +345,7 @@ impl Config {
                 client_name: format!("xagentd@{host_id}"),
             },
             host_id,
+            home: self.home.clone(),
             socket: self.socket(),
             state_db: self.state_db(),
             wake: self.wake()?,

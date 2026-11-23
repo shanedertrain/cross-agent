@@ -9,8 +9,7 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, UnixListener};
 use tokio_tungstenite::tungstenite::Message;
-use xagent_proto::Client;
-use xagent_wake::{Counts, Target, WakeConfig, WakeSource, Waker};
+use xagent_wake::{Counts, Endpoint, Target, WakeConfig, WakeSource, Waker};
 
 const ID: &str = "019a7b3c-1d2e-7f40-8a9b-0c1d2e3f4a5b";
 const SUB: &str = "019a7b3c-ffff-7f40-8a9b-0c1d2e3f4a5b";
@@ -34,14 +33,13 @@ impl WakeSource for Source {
     }
 }
 
-fn target(client: Client, conversation: &str) -> Target {
+fn target(endpoint: &Endpoint, conversation: &str) -> Target {
     Target {
         key: conversation.to_owned(),
         workspace: "conversations".to_owned(),
         agent: "chat-abc".to_owned(),
-        client,
         conversation: conversation.parse().expect("conversation"),
-        claude_pid: None,
+        endpoint: endpoint.clone(),
     }
 }
 
@@ -59,9 +57,12 @@ const WAKE_LINE: &str =
 #[tokio::test]
 async fn codex_thread_is_woken_only_when_idle_and_only_if_a_user_thread() {
     let home = tempfile::tempdir().expect("home");
-    let mut config = config(home.path());
-    config.codex_control_socket = home.path().join("app.sock");
-    let listener = UnixListener::bind(&config.codex_control_socket).expect("fake app-server");
+    let config = config(home.path());
+    let socket = home.path().join("app.sock");
+    let listener = UnixListener::bind(&socket).expect("fake app-server");
+    let codex = Endpoint::Codex {
+        control_socket: socket,
+    };
     let state = Arc::new(Mutex::new((String::from("active"), Vec::<Value>::new())));
     let served = Arc::clone(&state);
     tokio::spawn(async move {
@@ -107,12 +108,9 @@ async fn codex_thread_is_woken_only_when_idle_and_only_if_a_user_thread() {
     });
 
     let waker = Waker::new(config, Arc::new(Source));
-    waker.delivered(target(Client::Codex, SUB));
-    waker.delivered(target(
-        Client::Codex,
-        "ffffffff-0000-0000-0000-000000000000",
-    ));
-    waker.delivered(target(Client::Codex, ID));
+    waker.delivered(target(&codex, SUB));
+    waker.delivered(target(&codex, "ffffffff-0000-0000-0000-000000000000"));
+    waker.delivered(target(&codex, ID));
     tokio::time::sleep(Duration::from_secs(1)).await;
     assert!(
         state.lock().expect("lock").1.is_empty(),
@@ -216,7 +214,7 @@ async fn dsh_session_is_prompted_through_its_rpc_with_the_newest_token() {
     });
 
     let waker = Waker::new(config, Arc::new(Source));
-    waker.delivered(target(Client::Dsh, "dsh-session-1"));
+    waker.delivered(target(&Endpoint::Dsh, "dsh-session-1"));
     tokio::time::sleep(Duration::from_secs(3)).await;
     let sent = prompts.lock().expect("lock").clone();
     assert_eq!(sent.len(), 1, "{sent:?}");

@@ -18,6 +18,7 @@ use xagent_proto::{
     AgentId, Client, Conversation, LeaseRecord, MessageId, PersistentSubscription, WORKSPACE,
     now_ts,
 };
+use xagent_wake::Endpoint;
 
 /// Upper bound on the lease refresh interval.
 const REFRESH_INTERVAL_MAX: Duration = Duration::from_secs(10);
@@ -112,9 +113,8 @@ pub(crate) struct Session {
     pub(crate) agent: AgentId,
     pub(crate) client: Client,
     pub(crate) conversation: Conversation,
-    /// The Claude Code process of the conversation's window, when the session was opened by one:
-    /// the wake reads its registry record by pid.
-    pub(crate) claude_pid: Option<u32>,
+    /// Where the conversation's client is woken: its window's, or the client's default.
+    pub(crate) endpoint: Endpoint,
     pub(crate) started_at: String,
     pub(crate) opened: Instant,
     timing: LeaseTiming,
@@ -146,7 +146,7 @@ impl Session {
         agent: AgentId,
         client: Client,
         conversation: Conversation,
-        claude_pid: Option<u32>,
+        endpoint: Endpoint,
         timing: LeaseTiming,
     ) -> Self {
         Self {
@@ -154,7 +154,7 @@ impl Session {
             agent,
             client,
             conversation,
-            claude_pid,
+            endpoint,
             started_at: now_ts(),
             opened: Instant::now(),
             timing,

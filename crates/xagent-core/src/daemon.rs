@@ -13,6 +13,7 @@ use xagent_proto::{
     AgentId, Client, Conversation, Error, ErrorCode, WORKSPACE, conversation_agent_id, now_ts,
 };
 use xagent_store::{Store, StoreError};
+use xagent_wake::Endpoint;
 
 use crate::session::{EndReason, LeaseTiming, RefreshOutcome, Session};
 
@@ -27,6 +28,9 @@ const REFRESH_SLACK: Duration = Duration::from_millis(3500);
 #[derive(Debug, Clone)]
 pub struct DaemonConfig {
     pub host_id: String,
+    /// The daemon user's home: the clients' default profile directories (`~/.claude`, `~/.codex`)
+    /// for a session opened without a window.
+    pub home: PathBuf,
     pub nats: NatsSettings,
     pub socket: PathBuf,
     pub state_db: PathBuf,
@@ -187,7 +191,8 @@ impl Daemon {
         }
     }
 
-    /// Binds a session to `conversation`: derives its agent id, takes the lease, registers the
+    /// Binds a session to `conversation`, woken at `endpoint` (the window's; the client's default
+    /// when it has none or names another client): derives its agent id, takes the lease, registers the
     /// agent, ensures its durable consumer, and starts lease keeping and receiving.
     ///
     /// # Errors
@@ -199,9 +204,12 @@ impl Daemon {
         conversation: Conversation,
         client: Client,
         cwd: Option<&Path>,
-        claude_pid: Option<u32>,
+        endpoint: Option<Endpoint>,
     ) -> Result<Arc<Session>, Error> {
         let agent = conversation_agent_id(client, &conversation);
+        let endpoint = endpoint
+            .filter(|e| e.client() == client)
+            .unwrap_or_else(|| Endpoint::default_for(client, &self.config.home));
         let bus = self.require_bus("starting a session")?.clone();
         let session = loop {
             let closing = {
@@ -224,7 +232,7 @@ impl Daemon {
                             agent.clone(),
                             client,
                             conversation.clone(),
-                            claude_pid,
+                            endpoint,
                             LeaseTiming::new(bus.lease_ttl()),
                         ));
                         // Reserved before awaiting, so a concurrent open on this host fails at once.

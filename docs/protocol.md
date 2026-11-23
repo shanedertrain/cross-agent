@@ -127,7 +127,7 @@ session. Methods follow the MCP tool names (`whoami`, `inbox_status`, `message_s
 | Method | Needs a session | Use |
 |---|---|---|
 | `ping`, `status` | no | Liveness; daemon health (`xagent status`) |
-| `window_open` | no | An MCP connection declares itself, for the unbound-window wake |
+| `window_open` | no | An MCP connection declares itself, for the unbound-window wake: `cwd`, `conversation` (if the launch names one) and `endpoint`, where the client is woken: `{"client":"claude-code","sessions_dir":"...","pid":4242}`, `{"client":"codex","control_socket":"..."}` or `{"client":"dsh"}`, resolved from the hello's `CLAUDE_CONFIG_DIR` / `CODEX_HOME`. A session the connection opens is woken at the same endpoint; one opened without a window, at the client's default (`~/.claude`, `~/.codex`) |
 | `session_open`, `session_update` | no / yes | Bind a conversation; update its display name |
 | `stop_check` | no | Stop hooks: should this conversation read its inbox before stopping |
 | `sendmessage_mirror` | no | The `SendMessage` hook: log a send on the `sendmessage` topic |

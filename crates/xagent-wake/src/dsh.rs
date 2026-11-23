@@ -13,7 +13,6 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 use url::{Host, Url};
-use xagent_proto::Client;
 
 use crate::error::WakeError;
 use crate::policy::{Readiness, Target};
@@ -180,10 +179,7 @@ impl Dsh {
 
     /// For dsh the conversation id is the dsh session id.
     pub(crate) fn reaches(&self, target: &Target) -> bool {
-        target.client == Client::Dsh
-            && is_session_id(target.conversation.as_str())
-            && self.url.is_some()
-            && self.web_log.exists()
+        is_session_id(target.conversation.as_str()) && self.url.is_some() && self.web_log.exists()
     }
 
     async fn login(&self) -> Result<Rpc, WakeError> {

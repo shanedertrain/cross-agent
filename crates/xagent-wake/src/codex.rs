@@ -16,7 +16,6 @@ use tokio::net::UnixStream;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::{WebSocketStream, client_async_with_config};
-use xagent_proto::Client;
 
 use crate::error::WakeError;
 use crate::policy::{Readiness, Target};
@@ -193,7 +192,7 @@ impl CodexAppServer {
 
     /// For Codex the conversation id is the thread id.
     pub(crate) fn reaches(target: &Target) -> bool {
-        target.client == Client::Codex && is_thread_id(target.conversation.as_str())
+        is_thread_id(target.conversation.as_str())
     }
 
     pub(crate) async fn ready(&self, target: &Target) -> Readiness {
