@@ -111,6 +111,35 @@ impl Bus {
         self.lease_ttl
     }
 
+    /// The message stream's retention (`max_age`) in force on the broker, read live.
+    ///
+    /// # Errors
+    ///
+    /// [`BusError::Nats`] when the stream cannot be read.
+    pub async fn retention(&self) -> Result<Duration, BusError> {
+        let mut stream = self.js.get_stream(STREAM).await.map_err(BusError::nats)?;
+        let info = stream.info().await.map_err(BusError::nats)?;
+        Ok(info.config.max_age)
+    }
+
+    /// Sets the message stream's retention on the broker, for every host; returns the old value.
+    /// Messages older than the new value are removed by the broker.
+    ///
+    /// # Errors
+    ///
+    /// [`BusError::Nats`] when the stream cannot be read or updated.
+    pub async fn set_retention(&self, retention: Duration) -> Result<Duration, BusError> {
+        let mut stream = self.js.get_stream(STREAM).await.map_err(BusError::nats)?;
+        let mut config = stream.info().await.map_err(BusError::nats)?.config.clone();
+        let old = config.max_age;
+        config.max_age = retention;
+        self.js
+            .update_stream(config)
+            .await
+            .map_err(BusError::nats)?;
+        Ok(old)
+    }
+
     /// Creates the agent's durable consumer with `filters`, or updates the filters of an existing
     /// one in place (keeping its delivery cursor).
     pub async fn ensure_consumer(

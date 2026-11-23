@@ -109,5 +109,5 @@ mirrors a Claude-to-Claude send onto the `sendmessage` topic, so the bus stays a
 | Lease unconfirmed | `lease_pending`: no pulling, sends only while the last refresh is fresh |
 | Lease lost | `lease_lost`: the session can no longer act; restart it |
 | Stream or bucket incompatible | Daemon runs but reports not-ready (`xagent status`); it never modifies existing resources |
-| Daemon crash | Messages wait in JetStream (7 days); the next session of each agent resumes from its consumer. `xagent recover` rebuilds a lost SQLite |
-| Retention | `gc` runs at start and hourly; no local copy outlives the broker's 7 days |
+| Daemon crash | Messages wait in JetStream (the broker's retention, 7 days by default); the next session of each agent resumes from its consumer. `xagent recover` rebuilds a lost SQLite |
+| Retention | The broker's retention is the stream's `max_age`: 7 days for a new stream, changed with `xagent retention --days N` for every host. Each host's `[retention] local_days` keeps local copies shorter, never longer; `gc` runs at start and hourly |

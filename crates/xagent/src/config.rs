@@ -23,6 +23,29 @@ struct File {
     notify: NotifySection,
     #[serde(default)]
     projects: Vec<ProjectSection>,
+    #[serde(default)]
+    retention: RetentionSection,
+}
+
+/// `[retention]`: how long this host keeps local copies. The broker's retention, shared by every
+/// host, is set with `xagent retention --days N` and caps this.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RetentionSection {
+    #[serde(default = "default_retention_days")]
+    local_days: u32,
+}
+
+impl Default for RetentionSection {
+    fn default() -> Self {
+        Self {
+            local_days: default_retention_days(),
+        }
+    }
+}
+
+fn default_retention_days() -> u32 {
+    7
 }
 
 /// `[notify]`: the wake policy and its transports.
@@ -249,8 +272,14 @@ impl Config {
                 })
             })
             .collect::<Result<_>>()?;
+        let days = self.file.retention.local_days;
+        anyhow::ensure!(
+            (1..=3650).contains(&days),
+            "[retention] local_days must be 1-3650, got {days}"
+        );
         Ok(DaemonConfig {
             projects,
+            local_retention: std::time::Duration::from_secs(u64::from(days) * 86_400),
             nats: NatsSettings {
                 servers: nats.servers.clone(),
                 auth,

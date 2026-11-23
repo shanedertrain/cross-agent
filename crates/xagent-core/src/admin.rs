@@ -10,20 +10,34 @@ use xagent_store::{Delivery, StoreError};
 
 use crate::daemon::{Daemon, internal};
 use crate::protocol::Recover;
-use crate::topics::{filters, is_subscribed};
+use crate::topics::{filters, is_subscribed, nats_error};
 
-/// No local copy outlives the broker's own 7-day retention.
-const MAX_LOCAL_AGE: Duration = Duration::from_secs(7 * 86_400);
 const GC_INTERVAL: Duration = Duration::from_secs(3600);
-/// The stream keeps 7 days; a longer window reads nothing more.
-const RECOVER_MAX_HOURS: u32 = 7 * 24;
 /// Most messages re-read per agent.
 const RECOVER_MAX_MESSAGES: usize = 5000;
 
 impl Daemon {
-    /// Deletes every local copy older than the broker's retention (pending sends excepted).
-    pub(crate) fn gc(&self, dry_run: bool) -> Result<Value, Error> {
-        let cutoff = ts_before(MAX_LOCAL_AGE);
+    /// This host's retention: `[retention] local_days`, capped by the broker's (read live; the
+    /// local value alone while NATS is unavailable).
+    async fn effective_retention(&self) -> Duration {
+        let local = self.config.local_retention;
+        match self.bus() {
+            Some(bus) => match bus.retention().await {
+                Ok(broker) if !broker.is_zero() => local.min(broker),
+                Ok(_) => local,
+                Err(err) => {
+                    warn!(error = %err, "broker retention unreadable; using the local value");
+                    local
+                }
+            },
+            None => local,
+        }
+    }
+
+    /// Deletes every local copy older than this host's retention (pending sends excepted).
+    pub(crate) async fn gc(&self, dry_run: bool) -> Result<Value, Error> {
+        let retention = self.effective_retention().await;
+        let cutoff = ts_before(retention);
         let counts = self
             .store()
             .gc(&cutoff, dry_run)
@@ -38,6 +52,7 @@ impl Daemon {
         }
         Ok(serde_json::json!({
             "dry_run": dry_run,
+            "retention_days": retention.as_secs() / 86_400,
             "cutoff": cutoff,
             "deleted": {
                 "deliveries": counts.deliveries,
@@ -50,24 +65,68 @@ impl Daemon {
     /// Runs gc at start and every hour.
     pub(crate) async fn gc_loop(self: Arc<Self>) {
         loop {
-            if let Err(err) = self.gc(false) {
+            if let Err(err) = self.gc(false).await {
                 error!(error = %err, "retention gc failed");
             }
             tokio::time::sleep(GC_INTERVAL).await;
         }
     }
 
+    /// Shows the broker's retention and this host's; with `days`, sets the broker's first.
+    pub(crate) async fn retention(&self, days: Option<u32>) -> Result<Value, Error> {
+        let bus = self.require_bus("reading the retention")?.clone();
+        let previous = match days {
+            Some(days) => {
+                if !(1..=3650).contains(&days) {
+                    return Err(Error::new(
+                        ErrorCode::InvalidArgument,
+                        "days must be 1-3650",
+                    ));
+                }
+                let new = Duration::from_secs(u64::from(days) * 86_400);
+                let old = bus
+                    .set_retention(new)
+                    .await
+                    .map_err(|err| nats_error("setting the retention", &err))?;
+                info!(
+                    old_days = old.as_secs() / 86_400,
+                    new_days = days,
+                    "broker retention set"
+                );
+                Some(old.as_secs() / 86_400)
+            }
+            None => None,
+        };
+        let broker = bus
+            .retention()
+            .await
+            .map_err(|err| nats_error("reading the retention", &err))?;
+        let local = self.config.local_retention;
+        Ok(serde_json::json!({
+            "broker_days": broker.as_secs() / 86_400,
+            "local_days": local.as_secs() / 86_400,
+            "effective_local_days": local.min(broker).as_secs() / 86_400,
+            "previous_broker_days": previous,
+        }))
+    }
+
     /// Re-reads the last `hours` of the stream into the inboxes of the given agents (default:
     /// every agent last registered from this host), as unread. Messages already stored keep
     /// their state; topic messages count only from each subscription's start.
     pub(crate) async fn recover(&self, params: Recover) -> Result<Value, Error> {
-        if !(1..=RECOVER_MAX_HOURS).contains(&params.hours) {
+        let bus = self.require_bus("recovering inboxes")?.clone();
+        // The stream keeps the broker's retention; a longer window reads nothing more.
+        let broker = bus
+            .retention()
+            .await
+            .map_err(|err| nats_error("reading the retention", &err))?;
+        let max_hours = u32::try_from(broker.as_secs() / 3600).unwrap_or(u32::MAX);
+        if !(1..=max_hours).contains(&params.hours) {
             return Err(Error::new(
                 ErrorCode::InvalidArgument,
-                format!("hours must be 1-{RECOVER_MAX_HOURS}"),
+                format!("hours must be 1-{max_hours}"),
             ));
         }
-        let bus = self.require_bus("recovering inboxes")?.clone();
         let fail = |err: xagent_bus::BusError| {
             warn!(error = %err, "recover failed");
             Error::new(

@@ -12,8 +12,8 @@ use std::process::ExitCode;
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use xagent_core::protocol::{
-    Call, DmSend, Gc, InboxList, MessageRead, MessageReply, MessageSend, Recover, SessionOpen,
-    ThreadRead, TopicCreate, TopicHistory, TopicList, TopicRef,
+    Call, DmSend, Gc, InboxList, MessageRead, MessageReply, MessageSend, Recover, Retention,
+    SessionOpen, ThreadRead, TopicCreate, TopicHistory, TopicList, TopicRef,
 };
 use xagent_proto::{AgentId, Channel, Client as ClientKind, Conversation, Error, Kind, Priority};
 
@@ -138,11 +138,19 @@ enum Command {
         #[arg(long)]
         keep_unread: bool,
     },
-    /// Delete local copies older than the broker's 7-day retention.
+    /// Delete local copies older than this host's retention (`[retention] local_days`, capped by
+    /// the broker's).
     Gc {
         /// Report what would be deleted.
         #[arg(long)]
         dry_run: bool,
+    },
+    /// Show message retention: the broker's (shared by every host) and this host's local copies.
+    Retention {
+        /// Set the broker's retention to this many days, for every host. The broker deletes
+        /// messages older than that at once.
+        #[arg(long)]
+        days: Option<u32>,
     },
     /// Rebuild inboxes from JetStream: re-read the last N hours as unread.
     Recover {
@@ -297,6 +305,11 @@ async fn as_session(
     }
 }
 
+/// One call that needs no session.
+async fn call(config: &Config, call: Call) -> Result<serde_json::Value, Error> {
+    Client::connect(&config.socket()).await?.call(call).await
+}
+
 async fn run_client(config: &Config, command: Command) -> Result<serde_json::Value, Error> {
     match command {
         Command::Daemon
@@ -304,12 +317,7 @@ async fn run_client(config: &Config, command: Command) -> Result<serde_json::Val
         | Command::ClientConfig { .. }
         | Command::Hook { .. }
         | Command::Mcp { .. } => unreachable!("handled by main"),
-        Command::Status => {
-            Client::connect(&config.socket())
-                .await?
-                .call(Call::Status)
-                .await
-        }
+        Command::Status => call(config, Call::Status).await,
         Command::Whoami(session) => as_session(config, session, None).await,
         Command::Inbox(session) => as_session(config, session, Some(Call::InboxStatus)).await,
         Command::List {
@@ -381,17 +389,10 @@ async fn run_client(config: &Config, command: Command) -> Result<serde_json::Val
             });
             as_session(config, session, Some(call)).await
         }
-        Command::Gc { dry_run } => {
-            Client::connect(&config.socket())
-                .await?
-                .call(Call::Gc(Gc { dry_run }))
-                .await
-        }
+        Command::Gc { dry_run } => call(config, Call::Gc(Gc { dry_run })).await,
+        Command::Retention { days } => call(config, Call::Retention(Retention { days })).await,
         Command::Recover { hours, agents } => {
-            Client::connect(&config.socket())
-                .await?
-                .call(Call::Recover(Recover { hours, agents }))
-                .await
+            call(config, Call::Recover(Recover { hours, agents })).await
         }
     }
 }

@@ -438,3 +438,47 @@ fn recover_rebuilds_a_wiped_inbox() {
     );
     assert_eq!(again["agents"][0]["inserted"], 0, "idempotent: {again}");
 }
+
+/// The broker's retention is one setting for every host, set with `xagent retention --days`;
+/// `[retention] local_days` keeps a host's local copies shorter, never longer.
+#[test]
+fn retention_is_set_on_the_broker_and_capped_per_host() {
+    let nats = Nats::start();
+    let a = Host::start_with(&nats, "host-a", "[retention]\nlocal_days = 2\n");
+    let b = Host::start_with(&nats, "host-b", "[retention]\nlocal_days = 30\n");
+    let ready = |host: &Host| {
+        wait_for(Duration::from_secs(15), "nats ready", || {
+            host.run(&["status"])
+                .ok()
+                .filter(|s| s["nats"]["ready"] == true)
+        })
+    };
+    ready(&a);
+    ready(&b);
+
+    let shown = ok(a.run(&["retention"]), "show");
+    assert_eq!(
+        shown["broker_days"], 7,
+        "a new stream starts at 7 days: {shown}"
+    );
+    assert_eq!(shown["local_days"], 2, "{shown}");
+    assert_eq!(shown["effective_local_days"], 2, "{shown}");
+
+    let set = ok(a.run(&["retention", "--days", "3"]), "set");
+    assert_eq!(set["previous_broker_days"], 7, "{set}");
+    assert_eq!(set["broker_days"], 3, "{set}");
+    // Every host sees the broker's value at once; a longer local setting is capped by it.
+    let other = ok(b.run(&["retention"]), "show on b");
+    assert_eq!(other["broker_days"], 3, "{other}");
+    assert_eq!(other["effective_local_days"], 3, "{other}");
+    assert_eq!(ok(b.run(&["gc", "--dry-run"]), "gc")["retention_days"], 3);
+
+    // recover reads at most the broker's window.
+    assert!(b.run(&["recover", "--hours", "72"]).is_ok());
+    let refused = b
+        .run(&["recover", "--hours", "73"])
+        .expect_err("past the window");
+    assert_eq!(refused["code"], "invalid_argument", "{refused}");
+    let bad = a.run(&["retention", "--days", "0"]).expect_err("zero days");
+    assert_eq!(bad["code"], "invalid_argument", "{bad}");
+}

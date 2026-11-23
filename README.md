@@ -67,7 +67,8 @@ For more hosts, run the daemon on each one and point their configs at one NATS s
 | `xagent whoami \| inbox \| list \| read` | Acts as a conversation (`--conversation ID --client C [--cwd DIR]`) |
 | `xagent dm \| send \| reply \| thread` | Sends and reads as a conversation |
 | `xagent topic create \| list \| subscribe \| unsubscribe \| subscriptions \| history` | Manages topics |
-| `xagent gc [--dry-run]` | Deletes local copies older than the broker's 7-day retention |
+| `xagent retention [--days N]` | Shows message retention; `--days` sets the broker's, for every host (new streams: 7) |
+| `xagent gc [--dry-run]` | Deletes local copies older than this host's retention |
 | `xagent recover --hours N [--agent ID]...` | Re-reads the last N hours from JetStream into local inboxes |
 
 `--config FILE` picks the config; the default is `$XAGENT_CONFIG`, then `~/.config/xagent/config.toml`.

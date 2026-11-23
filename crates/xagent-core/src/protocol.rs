@@ -65,6 +65,8 @@ pub enum Call {
     ThreadRead(ThreadRead),
     /// Local retention pass; no session needed.
     Gc(Gc),
+    /// Show the broker's and this host's retention; set the broker's with `days`. No session needed.
+    Retention(Retention),
     /// Rebuild inboxes from JetStream; no session needed.
     Recover(Recover),
 }
@@ -81,6 +83,7 @@ impl Call {
                 | Self::StopCheck(_)
                 | Self::SendmessageMirror(_)
                 | Self::Gc(_)
+                | Self::Retention(_)
                 | Self::Recover(_)
         )
     }
@@ -265,6 +268,14 @@ pub struct ThreadRead {
 pub struct Gc {
     #[serde(default)]
     pub dry_run: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Retention {
+    /// Set the broker's message retention (every host) to this many days.
+    #[serde(default)]
+    pub days: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

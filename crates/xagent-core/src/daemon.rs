@@ -33,6 +33,8 @@ pub struct DaemonConfig {
     pub wake: xagent_wake::WakeConfig,
     /// Project directories and their root topics.
     pub projects: Vec<Project>,
+    /// Oldest local copy kept on this host; the broker's own retention caps it.
+    pub local_retention: Duration,
 }
 
 /// A project directory tree and the root topic its sessions join.

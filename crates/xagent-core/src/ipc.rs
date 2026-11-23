@@ -209,7 +209,8 @@ impl Connection {
             Call::MessageSend(params) => daemon.message_send(self.bound(), params).await,
             Call::MessageReply(params) => daemon.message_reply(self.bound(), params).await,
             Call::ThreadRead(params) => daemon.thread_read(self.bound(), &params),
-            Call::Gc(params) => daemon.gc(params.dry_run),
+            Call::Gc(params) => daemon.gc(params.dry_run).await,
+            Call::Retention(params) => daemon.retention(params.days).await,
             Call::Recover(params) => daemon.recover(params).await,
         }
     }
