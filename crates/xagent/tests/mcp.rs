@@ -119,6 +119,25 @@ impl Mcp {
         }
     }
 
+    /// Sends a request and returns the whole reply (result or JSON-RPC error).
+    fn raw_request(&mut self, method: &str, params: Value) -> Value {
+        let id = self.next_id;
+        self.next_id += 1;
+        let mut message = json!({ "jsonrpc": "2.0", "id": id, "method": method });
+        message["params"] = params;
+        self.send(&message);
+        loop {
+            let line = self
+                .lines
+                .recv_timeout(REPLY_TIMEOUT)
+                .unwrap_or_else(|_| panic!("no reply to {method}"));
+            let message: Value = serde_json::from_str(&line).expect("relay writes JSON lines");
+            if message["id"] == json!(id) {
+                return message;
+            }
+        }
+    }
+
     /// Calls a tool; `Ok` with its JSON result, or `Err` with its `{code, message}` error.
     fn tool(&mut self, name: &str, arguments: Value, meta: Option<Value>) -> Result<Value, Value> {
         let mut params = json!({ "name": name });
@@ -817,4 +836,29 @@ fn unbound_codex_thread_is_found_and_woken() {
             "[xagent] 1 message waiting for conversations/{id}. Check your xagent inbox."
         ) }] })
     );
+}
+
+/// A daemon restart (an upgrade) does not cost a client its MCP server: the relay refuses calls
+/// while the daemon is down, reconnects, replays the handshake, and the conversation keeps its
+/// identity and inbox.
+#[test]
+fn relay_survives_a_daemon_restart() {
+    let nats = Nats::start();
+    let mut host = Host::start(&nats, "host-a");
+    let mut dsh = Mcp::launch(&host, "dsh", &[("XAGENT_CONVERSATION_ID", "session 7")]);
+    let before = dsh.call("whoami", json!({}));
+
+    host.stop();
+    let refused = dsh.raw_request("tools/call", json!({ "name": "whoami", "arguments": {} }));
+    assert_eq!(refused["error"]["code"], -32000, "{refused}");
+    host.spawn_daemon();
+
+    let after = wait_for(REPLY_TIMEOUT, "the relay to reconnect", || {
+        let reply = dsh.raw_request("tools/call", json!({ "name": "whoami", "arguments": {} }));
+        let text = reply["result"]["content"][0]["text"].as_str()?;
+        let value: Value = serde_json::from_str(text).ok()?;
+        (reply["result"]["isError"] != json!(true)).then_some(value)
+    });
+    assert_eq!(after["agent_id"], before["agent_id"], "{after}");
+    dsh.close();
 }

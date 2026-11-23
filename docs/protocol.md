@@ -109,7 +109,7 @@ The Codex client names its thread in `_meta.threadId` of each tool call; Claude 
 
 ## MCP connection: hello frame
 
-A client launches `xagent mcp --client C`, which connects to `mcp.sock` and sends one line, then copies stdio both ways.
+A client launches `xagent mcp --client C`, which connects to `mcp.sock` and sends one line, then relays newline-delimited JSON-RPC both ways.
 
 ```text
 relay   {"client":"claude-code","cwd":"/home/u/p","env":{"CLAUDE_PID":"4242","CLAUDE_CODE_SESSION_ID":"..."}}
@@ -119,6 +119,10 @@ daemon  {"ok":true}     or     {"ok":false,"error":{"code":"...","message":"..."
 `client` is `claude-code` (alias `claude`), `codex` or `dsh`. `env` carries only the variables that are set among
 `XAGENT_CONVERSATION_ID`, `XAGENT_SESSION_TITLE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_MESSAGING_SOCKET`, `CLAUDE_PID`,
 `CLAUDE_CONFIG_DIR`, `CODEX_HOME`. The hello is at most 64 KiB; after the answer the connection is MCP.
+
+When the daemon closes the connection, the relay answers each unanswered request with JSON-RPC error `-32000`,
+reconnects, sends the hello again, and replays the client's `initialize` request (dropping the daemon's answer) and
+`notifications/initialized`. The client keeps its MCP server across daemon restarts.
 
 ## Daemon IPC
 

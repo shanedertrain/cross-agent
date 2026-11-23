@@ -178,6 +178,18 @@ impl Host {
         self.daemon = Some(child);
     }
 
+    /// Graceful stop, as `systemctl stop` does: SIGTERM, then wait for the exit.
+    pub fn stop(&mut self) {
+        if let Some(mut child) = self.daemon.take() {
+            let status = Command::new("kill")
+                .args(["-TERM", &child.id().to_string()])
+                .status()
+                .expect("kill runs");
+            assert!(status.success(), "SIGTERM delivered");
+            child.wait().expect("daemon exits");
+        }
+    }
+
     /// Hard crash: SIGKILL, no cleanup (leases stay until their server-side TTL).
     pub fn crash(&mut self) {
         if let Some(mut child) = self.daemon.take() {

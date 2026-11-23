@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- `xagent mcp` survives a daemon restart: it reconnects and replays the client's handshake, so sessions no longer
+  need `/mcp` after an upgrade.
+
 ## 2.0.0
 
 xagent is rewritten in Rust: one `xagent` binary (daemon, MCP relay, hooks, CLI), a cargo workspace of seven crates, no
