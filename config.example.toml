@@ -4,7 +4,8 @@
 # Every key is optional; the values shown are the defaults unless marked <placeholder>.
 # Unknown keys are refused.
 
-# host_id = "workstation-a"            # default: the short hostname
+# host_id = "workstation-a"            # default: the short hostname. Unique per daemon (it scopes
+#                                      # `xagent recover`); a duplicate waits until the other stops.
 
 [nats]
 servers = ["nats://127.0.0.1:4222"]    # LAN: ["tls://nats-host.local:4222"]

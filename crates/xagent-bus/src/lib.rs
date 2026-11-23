@@ -8,6 +8,7 @@
 mod bootstrap;
 mod connect;
 mod directory;
+mod hosts;
 mod inbox;
 mod registry;
 mod scan;
@@ -52,6 +53,19 @@ pub enum BusError {
         agent: AgentId,
         host_id: String,
         client: String,
+        since: String,
+    },
+    /// Another live daemon runs with this host's `host_id`.
+    #[error(
+        "host_id {host_id:?} is held by another running daemon (run {run_id}, machine {machine_id}, \
+         socket {socket}, since {since}). Give this host a unique host_id in its config, or stop \
+         the other daemon"
+    )]
+    HostIdTaken {
+        host_id: String,
+        run_id: String,
+        machine_id: String,
+        socket: String,
         since: String,
     },
     /// A create found the key already present.

@@ -718,12 +718,16 @@ fn unbound_claude_window_is_woken_for_waiting_messages() {
     host.as_conv("conv-alice", "dm", &["--to", &id, "--summary", "again"])
         .expect("dm sent");
     let bound = format!("unread messages for conversations/{id}");
-    wait_for(Duration::from_secs(20), "a wake for the bound session", || {
-        frames
-            .recv_timeout(Duration::from_secs(1))
-            .ok()
-            .filter(|frame| frame.contains(&bound))
-    });
+    wait_for(
+        Duration::from_secs(20),
+        "a wake for the bound session",
+        || {
+            frames
+                .recv_timeout(Duration::from_secs(1))
+                .ok()
+                .filter(|frame| frame.contains(&bound))
+        },
+    );
     let (_, report) = host.run_with_stdin(&["doctor"], "");
     let registry = claude_dir.path().join("sessions");
     assert!(

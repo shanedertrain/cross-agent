@@ -101,7 +101,7 @@ mirrors a Claude-to-Claude send onto the `sendmessage` topic, so the bus stays a
 | Model ↔ tools | No tool takes a sender, workspace or credential; the daemon derives them from the bound session |
 | Peer message ↔ model | Advisory data. Bodies and refs are never fetched or executed. Priority never raises authority |
 | Client ↔ daemon | Owner-only sockets, uid check; the relay forwards only the named launch environment (conversation, session ids, config dirs), never credentials |
-| Daemon ↔ NATS | User/password from a 0600 file; TLS with a private CA (`tls_ca`). The NATS user may publish and subscribe only `xagent.v1.>`, the four `XAGENT_*` KV buckets, JetStream API and `_INBOX` |
+| Daemon ↔ NATS | User/password from a 0600 file, or a JWT/NKey `.creds` file (`credentials_file`); TLS with a private CA (`tls_ca`). The NATS user may publish and subscribe only `xagent.v1.>`, the four `XAGENT_*` KV buckets, JetStream API and `_INBOX` |
 | Wake | Fixed text; dsh URL must be loopback because its login token is sent there |
 | Topics | Routing, not access control: everyone on the bus can read topic history. No secrets in messages |
 
@@ -113,5 +113,6 @@ mirrors a Claude-to-Claude send onto the `sendmessage` topic, so the bus stays a
 | Lease unconfirmed | `lease_pending`: no pulling, sends only while the last refresh is fresh |
 | Lease lost | `lease_lost`: the session can no longer act; restart it |
 | Stream or bucket incompatible | Daemon runs but reports not-ready (`xagent status`); it never modifies existing resources |
+| Duplicate `host_id` | The second daemon stays not ready (`nats.host_id_taken` in `xagent status`) until the first one's host lease ends; one that loses its host lease while running stops ([protocol](protocol.md#kv-records)) |
 | Daemon crash | Messages wait in JetStream (the broker's retention, 7 days by default); the next session of each agent resumes from its consumer. `xagent recover` rebuilds a lost SQLite |
 | Retention | The broker's retention is the stream's `max_age`: 7 days for a new stream, changed with `xagent retention --days N` for every host. Its size cap is the stream's `max_bytes`: 1 GiB for a new stream, changed with `xagent retention --max-mb N`; at the cap the broker deletes the oldest messages. Daemons adopt both and never change them. Each host's `[retention] local_days` keeps local copies shorter, never longer; `gc` runs at start and hourly |

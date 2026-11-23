@@ -355,3 +355,47 @@ fn default_paths_follow_xdg_base_directories() {
         "{err}"
     );
 }
+
+/// `host_id` is unique: a second daemon with the same `host_id` (another socket, so another
+/// daemon) is refused, and `status` and doctor name the run that holds it. Once that daemon dies
+/// and its host lease expires (TTL 30 s), the second becomes ready.
+#[test]
+fn duplicate_host_id_is_refused_until_the_first_lease_ends() {
+    let nats = Nats::start();
+    let mut first = Host::start(&nats, "same-host");
+    let first_run = first.run(&["status"]).expect("status")["run_id"]
+        .as_str()
+        .expect("run_id")
+        .to_owned();
+    let mut second = Host::configure(&nats, "same-host", "");
+    second.launch_daemon();
+    let taken = wait_for(
+        Duration::from_secs(15),
+        "the second daemon to be refused",
+        || {
+            let status = second.run(&["status"]).ok()?;
+            status["nats"]["host_id_taken"].as_str().map(str::to_owned)
+        },
+    );
+    assert!(
+        taken.contains("host_id \"same-host\"") && taken.contains(&first_run),
+        "{taken}"
+    );
+    let (code, report) = second.run_with_stdin(&["doctor"], "");
+    assert_eq!(code, Some(1), "{report}");
+    assert!(report.contains("FAIL  host_id"), "{report}");
+    assert!(
+        second.as_conv("conv-x", "whoami", &[]).is_err(),
+        "no sessions while refused"
+    );
+
+    first.crash();
+    wait_for(
+        Duration::from_secs(45),
+        "the first host lease to expire",
+        || {
+            let status = second.run(&["status"]).ok()?;
+            (status["nats"]["ready"] == true).then_some(())
+        },
+    );
+}

@@ -188,8 +188,13 @@ struct SessionView {
 
 impl Daemon {
     pub(crate) fn status(&self) -> Result<Value, Error> {
+        let mut host_id_taken = None;
         let (ready, jetstream) = match self.readiness() {
             Readiness::Connecting => (false, Value::Null),
+            Readiness::HostIdTaken(reason) => {
+                host_id_taken = Some(reason);
+                (false, Value::Null)
+            }
             Readiness::Ready(report) => (
                 true,
                 serde_json::json!({
@@ -222,7 +227,11 @@ impl Daemon {
             "host_id": self.config.host_id,
             "run_id": self.run_id,
             "started_at": self.started_at,
-            "nats": { "connected": self.connection.is_connected(), "ready": ready },
+            "nats": {
+                "connected": self.connection.is_connected(),
+                "ready": ready,
+                "host_id_taken": host_id_taken,
+            },
             "jetstream": jetstream,
             "state_db": self.config.state_db,
             "sessions": sessions,

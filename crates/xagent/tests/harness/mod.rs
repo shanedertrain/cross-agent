@@ -144,19 +144,7 @@ impl Host {
 
     /// Starts the daemon and waits until it reports JetStream ready.
     pub fn spawn_daemon(&mut self) {
-        assert!(self.daemon.is_none(), "daemon already running");
-        let log = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(self.dir.path().join("daemon.log"))
-            .expect("daemon log");
-        let child = self
-            .command()
-            .arg("daemon")
-            .stderr(log)
-            .spawn()
-            .expect("daemon starts");
-        self.daemon = Some(child);
+        self.launch_daemon();
         let deadline = Instant::now() + STARTUP_TIMEOUT;
         loop {
             if let Ok(status) = self.run(&["status"])
@@ -171,6 +159,23 @@ impl Host {
             );
             std::thread::sleep(Duration::from_millis(50));
         }
+    }
+
+    /// Starts the daemon without waiting for it.
+    pub fn launch_daemon(&mut self) {
+        assert!(self.daemon.is_none(), "daemon already running");
+        let log = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.dir.path().join("daemon.log"))
+            .expect("daemon log");
+        let child = self
+            .command()
+            .arg("daemon")
+            .stderr(log)
+            .spawn()
+            .expect("daemon starts");
+        self.daemon = Some(child);
     }
 
     /// Hard crash: SIGKILL, no cleanup (leases stay until their server-side TTL).

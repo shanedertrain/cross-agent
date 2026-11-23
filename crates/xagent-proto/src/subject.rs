@@ -83,6 +83,20 @@ pub fn registry_key(workspace: &str, name: &str) -> String {
     format!("{workspace}.{name}")
 }
 
+/// A `host_id`: 1-64 of `A-Z a-z 0-9 _ -` (one KV key token).
+pub fn is_valid_host_id(host_id: &str) -> bool {
+    (1..=64).contains(&host_id.len())
+        && host_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
+/// `XAGENT_LEASES` key of a daemon's host lease: `_host.<host_id>`. A workspace token never
+/// starts with `_`, so it cannot collide with an agent lease (`<workspace>.<agent_id>`).
+pub fn host_lease_key(host_id: &str) -> String {
+    format!("_host.{host_id}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

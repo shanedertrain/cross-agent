@@ -19,10 +19,12 @@ pub use envelope::{
 pub use error::{Error, ErrorCode};
 pub use id::{AgentId, is_valid_id, validate_topic};
 pub use identity::{Client, Conversation, conversation_agent_id};
-pub use records::{AgentRecord, LeaseRecord, PersistentSubscription, SubscriptionSet, TopicRecord};
+pub use records::{
+    AgentRecord, HostLeaseRecord, LeaseRecord, PersistentSubscription, SubscriptionSet, TopicRecord,
+};
 pub use subject::{
-    STREAM_SUBJECTS, chat_subject, consumer_name, dm_subject, parse_subject, registry_key,
-    subject_matches,
+    STREAM_SUBJECTS, chat_subject, consumer_name, dm_subject, host_lease_key, is_valid_host_id,
+    parse_subject, registry_key, subject_matches,
 };
 pub use time::{now_ts, ts_before};
 

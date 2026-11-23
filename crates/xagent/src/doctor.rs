@@ -251,6 +251,13 @@ async fn daemon_checks(config: &Config, report: &mut Report) -> Option<Value> {
             Verdict::Pass,
             "stream and buckets present and compatible",
         );
+    } else if let Some(taken) = nats["host_id_taken"].as_str() {
+        report.add_fix(
+            "host_id",
+            Verdict::Fail,
+            taken,
+            "set a unique host_id in this host's config, or stop the other daemon",
+        );
     } else {
         let why = status["jetstream"]["fatal"].as_str().unwrap_or(
             if nats["connected"] == Value::Bool(true) {

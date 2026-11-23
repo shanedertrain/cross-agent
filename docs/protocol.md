@@ -21,7 +21,7 @@ Three layers: the NATS wire (shared by every host), the MCP tools (what models c
 | Stream `XAGENT_MESSAGES` | Subjects `xagent.v1.chat.>`, `xagent.v1.dm.>`; limits retention, file storage, 1 replica; max age 7 d and max bytes 1 GiB at creation (the operator's to change: `xagent retention`; daemons adopt the stream's values), discard old, duplicate window 10 min, max message size 17408 (16384 cap + 1024 header slack) |
 | KV `XAGENT_TOPICS` | Key `<ws>.<topic>`, value `xagent.topic.v1`, history 5 |
 | KV `XAGENT_AGENTS` | Key `<ws>.<agent_id>`, value `xagent.agent.v1`, history 5 |
-| KV `XAGENT_LEASES` | Key `<ws>.<agent_id>`, value `xagent.lease.v1`, history 1; bucket `max_age` 30 s is the lease TTL: a present key is a live lease |
+| KV `XAGENT_LEASES` | Key `<ws>.<agent_id>`, value `xagent.lease.v1`, history 1; bucket `max_age` 30 s is the lease TTL: a present key is a live lease. Also key `_host.<host_id>`, value `xagent.host_lease.v1`: the daemon run that owns a `host_id` (a workspace token never starts with `_`, so it cannot collide with an agent lease) |
 | KV `XAGENT_SUBSCRIPTIONS` | Key `<ws>.<agent_id>`, value `xagent.subscriptions.v1` (the agent's whole set), history 1, written by compare-and-set |
 | Durable consumer | One per agent: `xagent_<ws>_<agent>_<sha1(ws NUL agent)[:10]>`; explicit ack, `ack_wait` 30 s, max ack pending 1000, deliver policy new, `filter_subjects` = its DM subject + subscribed topics |
 
@@ -57,10 +57,18 @@ ignore unknown fields and show an unknown `kind` as `message`, an unknown ref `t
 |---|---|
 | `xagent.agent.v1` | `workspace`, `agent_id`, `display_name`, `project_topic`, `client`, `host_id`, `capabilities`, `created_at`, `updated_at` |
 | `xagent.lease.v1` | `workspace`, `agent_id`, `instance_id`, `host_id`, `daemon_run_id`, `client`, `acquired_at`, `refreshed_at`, `ttl_seconds` |
+| `xagent.host_lease.v1` | `host_id`, `daemon_run_id`, `machine_id` (`/etc/machine-id`, when readable), `socket`, `acquired_at`, `refreshed_at`, `ttl_seconds` |
 | `xagent.topic.v1` | `workspace`, `name`, `description`, `created_by`, `created_at`, `archived` |
 | `xagent.subscriptions.v1` | `workspace`, `agent_id`, `subscriptions[]` of `{pattern, start_seq, created_at}`, `updated_at` |
 
 A topic message reaches an inbox only if its stream sequence is at or after the matching subscription's `start_seq`.
+
+**Host lease.** `host_id` scopes `xagent recover`, so it must be unique. A daemon creates `_host.<host_id>` before it
+becomes ready and refreshes it every 10 s (a third of the TTL) by compare-and-set; it deletes it at shutdown. While
+another run holds the key the daemon stays not ready (`xagent status`: `nats.host_id_taken` names that run) and retries
+every 3 s until the key is released or expires. A lease written by an earlier run with the same `machine_id` and
+`socket` is taken over at once: the new run holds that socket, so the old one is dead. A daemon whose refresh finds
+another run's lease stops with an error.
 
 ## MCP tools
 

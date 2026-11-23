@@ -311,6 +311,10 @@ impl Config {
                 .unwrap_or_default()
                 .to_owned(),
         };
+        anyhow::ensure!(
+            xagent_proto::is_valid_host_id(&host_id),
+            "host_id {host_id:?} must be 1-64 of A-Z a-z 0-9 _ - (set host_id in the config)"
+        );
         let projects = self
             .file
             .projects
