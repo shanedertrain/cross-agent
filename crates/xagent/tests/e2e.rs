@@ -276,3 +276,82 @@ fn nats_credentials_file_is_validated() {
         "{stderr}"
     );
 }
+
+/// A daemon started outside the harness, killed however the test ends.
+struct Daemon(std::process::Child);
+
+impl Drop for Daemon {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// With no `--config` and no paths in the config, the binary follows the XDG base directory
+/// spec: config from `$XDG_CONFIG_HOME/xagent`, state database under `$XDG_DATA_HOME/xagent`,
+/// sockets under `$XDG_STATE_HOME/xagent`; a relative value is ignored (`~` defaults).
+#[test]
+fn default_paths_follow_xdg_base_directories() {
+    let nats = Nats::start();
+    let root = tempfile::Builder::new()
+        .prefix("xa-xdg")
+        .tempdir()
+        .expect("temp dir");
+    let (home, config, data, state) = (
+        root.path().join("home"),
+        root.path().join("config"),
+        root.path().join("data"),
+        root.path().join("state"),
+    );
+    std::fs::create_dir_all(config.join("xagent")).expect("config dir");
+    std::fs::write(
+        config.join("xagent/config.toml"),
+        format!("host_id = \"xdg\"\n[nats]\nservers = [\"{}\"]\n", nats.url),
+    )
+    .expect("config");
+    let xagent = |args: &[&str]| {
+        let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_xagent"));
+        cmd.args(args)
+            .env("HOME", &home)
+            .env_remove("XAGENT_CONFIG")
+            .env("XDG_CONFIG_HOME", &config)
+            .env("XDG_DATA_HOME", &data)
+            .env("XDG_STATE_HOME", &state);
+        cmd
+    };
+    let _daemon = Daemon(
+        xagent(&["daemon"])
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("daemon starts"),
+    );
+    let status = wait_for(Duration::from_secs(15), "the daemon to be ready", || {
+        let out = xagent(&["status"]).output().ok()?;
+        let status: Value = serde_json::from_slice(&out.stdout).ok()?;
+        (status["nats"]["ready"] == true).then_some(status)
+    });
+    assert_eq!(
+        status["host_id"], "xdg",
+        "the XDG config was read: {status}"
+    );
+    assert!(state.join("xagent/xagentd.sock").exists());
+    assert!(state.join("xagent/mcp.sock").exists());
+    assert!(data.join("xagent/xagent.db").exists());
+
+    // A relative XDG_STATE_HOME is ignored: the CLI looks for ~/.local/state/xagent/xagentd.sock.
+    let out = xagent(&["status"])
+        .env("XDG_STATE_HOME", "relative/state")
+        .output()
+        .expect("xagent runs");
+    let err: Value = serde_json::from_slice(&out.stderr).expect("JSON error");
+    let message = err["error"]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains(
+            &home
+                .join(".local/state/xagent/xagentd.sock")
+                .display()
+                .to_string()
+        ),
+        "{err}"
+    );
+}

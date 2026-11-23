@@ -135,7 +135,10 @@ impl Host {
         cmd.arg("--config")
             .arg(&self.config)
             .env("HOME", self.dir.path().join("home"))
-            .env_remove("XAGENT_CONFIG");
+            .env_remove("XAGENT_CONFIG")
+            .env_remove("XDG_CONFIG_HOME")
+            .env_remove("XDG_DATA_HOME")
+            .env_remove("XDG_STATE_HOME");
         cmd
     }
 

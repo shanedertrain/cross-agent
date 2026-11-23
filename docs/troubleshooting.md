@@ -7,7 +7,7 @@ outbox and each wake transport, and prints a fix for anything that is not PASS. 
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Tool returns `daemon_unavailable`; doctor `daemon` FAIL | Daemon not running, or the client and daemon use different config (socket path) | `systemctl --user status xagentd`; start it. A client started with another `XAGENT_CONFIG` needs the same value in its MCP `env` |
+| Tool returns `daemon_unavailable`; doctor `daemon` FAIL | Daemon not running, or the client and daemon use different config (socket path) | `systemctl --user status xagentd`; start it. A client started with another `XAGENT_CONFIG`, `XDG_CONFIG_HOME` or `XDG_STATE_HOME` needs the same value in its MCP `env` (and the `xagentd` unit in an `Environment=` line) |
 | doctor `nats server` FAIL | nats-server down, wrong `[nats] servers`, firewall | `systemctl --user status nats-server` or `scripts/run-nats.sh status`; check host and port. Sends keep queuing meanwhile |
 | Daemon log `Authorization Violation`; doctor `nats credentials` | Wrong user or password; password file with a stray newline or wrong path | Compare `cat -A ~/.config/xagent/nats.password` with the server config; restart the daemon |
 | Daemon exits at start `NATS credentials file ...`; doctor `nats credentials` FAIL | `[nats] credentials_file` missing, unreadable, or not a `.creds` file (user JWT and NKey seed blocks); or set together with `user`/`password_file` | Fix the path or re-download the file (`nsc generate creds`, or your provider's console); `chmod 600`; keep only one of `credentials_file` and `user` + `password_file` |

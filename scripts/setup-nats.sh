@@ -24,8 +24,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 BIN="$HOME/.local/bin"
-CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/xagent"
-DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/xagent/nats"
+# XDG base directory: $1 when it is an absolute path (the spec ignores relative ones), else ~/$2.
+xdg() { local dir="${!1:-}"; [[ "$dir" == /* ]] || dir="$HOME/$2"; printf '%s\n' "$dir"; }
+CONF_DIR="$(xdg XDG_CONFIG_HOME .config)/xagent"
+DATA_DIR="$(xdg XDG_DATA_HOME .local/share)/xagent/nats"
 mkdir -p "$BIN" "$CONF_DIR" "$DATA_DIR"
 chmod 700 "$CONF_DIR" "$DATA_DIR"
 
@@ -136,12 +138,12 @@ else
 fi
 
 cat <<EOF
-Set in ~/.config/xagent/config.toml:
+Set in $CONF_DIR/config.toml:
   [nats]
   servers = ["$SCHEME://$LISTEN"]
   user = "xagent"
   password_file = "$PW_FILE"
 EOF
 if [[ $TLS -eq 1 ]]; then
-  echo '  tls_ca = "~/.config/xagent/pki/ca.pem"   # copy ca.pem to every other host'
+  echo "  tls_ca = \"$CONF_DIR/pki/ca.pem\"   # copy ca.pem to every other host"
 fi

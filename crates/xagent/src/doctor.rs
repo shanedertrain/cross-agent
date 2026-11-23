@@ -102,7 +102,7 @@ fn local_checks(config: &Config, report: &mut Report) {
             "config",
             Verdict::Warn,
             "no config file; using defaults (nats://127.0.0.1:4222, no auth)",
-            "copy config.example.toml to ~/.config/xagent/config.toml",
+            "copy config.example.toml to $XDG_CONFIG_HOME/xagent/config.toml (default ~/.config)",
         ),
     }
     match config.wake() {

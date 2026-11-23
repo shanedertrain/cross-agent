@@ -27,7 +27,8 @@ use xagent_core::client::Client;
     about = "Cross-agent messaging over NATS JetStream"
 )]
 struct Cli {
-    /// Config file (default: `$XAGENT_CONFIG`, then `~/.config/xagent/config.toml`).
+    /// Config file (default: `$XAGENT_CONFIG`, then `$XDG_CONFIG_HOME/xagent/config.toml`, where
+    /// `XDG_CONFIG_HOME` defaults to `~/.config`).
     #[arg(long, global = true)]
     config: Option<PathBuf>,
     #[command(subcommand)]

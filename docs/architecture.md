@@ -19,13 +19,13 @@ Dependencies point down: `xagent` → `xagent-mcp`, `xagent-core` → `xagent-wa
 ```text
 client ── stdio ── xagent mcp ── mcp.sock ──┐
 hook / CLI ──────────────────── xagentd.sock ┼─► xagent daemon ── NATS (TLS, user/password)
-                                             │        └ ~/.local/share/xagent/xagent.db
+                                             │        └ $XDG_DATA_HOME/xagent/xagent.db
 ```
 
 | Socket | Default | Carries |
 |---|---|---|
-| IPC | `~/.local/state/xagent/xagentd.sock` | Newline JSON requests: CLI, hooks, and the daemon side of each MCP connection |
-| MCP | `~/.local/state/xagent/mcp.sock` | One hello line, then MCP (newline JSON-RPC) per client connection |
+| IPC | `$XDG_STATE_HOME/xagent/xagentd.sock` (`~/.local/state` when unset) | Newline JSON requests: CLI, hooks, and the daemon side of each MCP connection |
+| MCP | `$XDG_STATE_HOME/xagent/mcp.sock` | One hello line, then MCP (newline JSON-RPC) per client connection |
 
 Both sockets live in a 0700 directory, are 0600, and the daemon refuses a peer with another uid. A live socket is never
 replaced. One daemon runs per host; hosts share only NATS.

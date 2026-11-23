@@ -6,6 +6,8 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# XDG base directory: $1 when it is an absolute path (the spec ignores relative ones), else ~/$2.
+xdg() { local dir="${!1:-}"; [[ "$dir" == /* ]] || dir="$HOME/$2"; printf '%s\n' "$dir"; }
 PREFIX="$HOME/.local"
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -23,16 +25,22 @@ mkdir -p "$PREFIX/bin"
 install -m 0755 "$REPO/target/release/xagent" "$BIN.new" && mv -f "$BIN.new" "$BIN"
 echo "==> installed $BIN ($("$BIN" --version))"
 
-CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/xagent"
+CONF_DIR="$(xdg XDG_CONFIG_HOME .config)/xagent"
 mkdir -p "$CONF_DIR" && chmod 700 "$CONF_DIR"
 if [[ ! -f "$CONF_DIR/config.toml" ]]; then
   install -m 0600 "$REPO/config.example.toml" "$CONF_DIR/config.toml"
   echo "==> wrote $CONF_DIR/config.toml"
 fi
 
-UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+UNIT_DIR="$(xdg XDG_CONFIG_HOME .config)/systemd/user"
 mkdir -p "$UNIT_DIR"
-sed "s|^ExecStart=.*|ExecStart=$BIN daemon|" "$REPO/deploy/systemd/xagentd.service" > "$UNIT_DIR/xagentd.service"
+# The user manager may not see this shell's XDG variables: pass the ones set to the daemon, so it
+# uses the same config, state database and socket as the CLI.
+ENV_LINES=""
+for var in XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME; do
+  [[ "${!var:-}" == /* ]] && ENV_LINES+="Environment=$var=${!var}\n"
+done
+sed -e "s|^ExecStart=.*|${ENV_LINES}ExecStart=$BIN daemon|" "$REPO/deploy/systemd/xagentd.service" > "$UNIT_DIR/xagentd.service"
 cp "$REPO/deploy/systemd/nats-server.service" "$UNIT_DIR/nats-server.service"
 echo "==> installed units in $UNIT_DIR"
 

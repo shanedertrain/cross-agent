@@ -1,5 +1,6 @@
-# xagent 2.0 host configuration: copy to ~/.config/xagent/config.toml (or set XAGENT_CONFIG,
-# or pass --config). Machine-level. Never commit a filled-in copy: it points at credential files.
+# xagent 2.0 host configuration: copy to $XDG_CONFIG_HOME/xagent/config.toml (default
+# ~/.config/xagent/config.toml), or set XAGENT_CONFIG, or pass --config. Machine-level. Never
+# commit a filled-in copy: it points at credential files.
 # Every key is optional; the values shown are the defaults unless marked <placeholder>.
 # Unknown keys are refused.
 
@@ -16,6 +17,7 @@ servers = ["nats://127.0.0.1:4222"]    # LAN: ["tls://nats-host.local:4222"]
 # tls_ca = "~/.config/xagent/ca.pem"   # needed when the servers use tls:// with a private CA
 
 [daemon]
+# Defaults follow $XDG_STATE_HOME and $XDG_DATA_HOME (when absolute), shown here unset.
 # socket = "~/.local/state/xagent/xagentd.sock"   # the MCP socket (mcp.sock) sits next to it
 # state_db = "~/.local/share/xagent/xagent.db"
 

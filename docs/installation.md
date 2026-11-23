@@ -3,6 +3,12 @@
 Two layouts: **single host** (NATS on loopback) and **LAN** (one NATS server, a daemon on every participating host).
 Nothing here edits shell rc files or overwrites an existing config or secret.
 
+**Paths.** This page shows the default directories. The binary and the scripts follow the XDG base directory spec:
+`~/.config` is `$XDG_CONFIG_HOME`, `~/.local/share` is `$XDG_DATA_HOME` and `~/.local/state` is `$XDG_STATE_HOME`
+whenever the variable holds an absolute path. Every process must see the same values: `install.sh` writes the ones
+set at install time into the `xagentd` unit, and a client that starts its MCP server with a filtered environment
+(Codex) needs them in that server's `env`, like `XAGENT_CONFIG`.
+
 ## Requirements
 
 | Need | Note |
@@ -68,7 +74,8 @@ the `openssl x509 -req` step with the same CA and `pki/server.ext`, then reload 
 
 ## 3. Configuration
 
-`~/.config/xagent/config.toml` (or `--config`, or `$XAGENT_CONFIG`). Every key is optional; unknown keys are refused.
+`$XDG_CONFIG_HOME/xagent/config.toml`, default `~/.config/xagent/config.toml` (or `--config`, or `$XAGENT_CONFIG`).
+Every key is optional; unknown keys are refused.
 `config.example.toml` documents each one.
 
 ```toml
@@ -87,7 +94,7 @@ topic = "editor-auto"
 |---|---|
 | top | `host_id` (default: short hostname; a label for diagnostics) |
 | `[nats]` | `servers`, `user` + `password_file`, or `credentials_file` (a `.creds` file: user JWT and NKey seed, for JWT auth; 0600; excludes the other two), `tls_ca` |
-| `[daemon]` | `socket` (`~/.local/state/xagent/xagentd.sock`; `mcp.sock` sits beside it), `state_db` (`~/.local/share/xagent/xagent.db`) |
+| `[daemon]` | `socket` (`$XDG_STATE_HOME/xagent/xagentd.sock`, default `~/.local/state/...`; `mcp.sock` sits beside it), `state_db` (`$XDG_DATA_HOME/xagent/xagent.db`, default `~/.local/share/...`) |
 | `[notify]` | `wake`, `wake_min_interval_seconds` (120), `wake_max_wait_seconds` (1800), `claude_sessions_dir`, `codex_control_socket`, `dsh_url`, `dsh_web_log` |
 | `[[projects]]` | `path`, `topic` (one token; the most specific path wins) |
 | `[retention]` | `local_days` (7): oldest local copy on this host; the broker's retention (`xagent retention`) caps it |

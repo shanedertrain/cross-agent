@@ -2,8 +2,10 @@
 # Start nats-server in the background with the xagent config (no systemd required).
 #   scripts/run-nats.sh [start|stop|status]
 set -euo pipefail
-CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/xagent"
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/xagent"
+# XDG base directory: $1 when it is an absolute path (the spec ignores relative ones), else ~/$2.
+xdg() { local dir="${!1:-}"; [[ "$dir" == /* ]] || dir="$HOME/$2"; printf '%s\n' "$dir"; }
+CONF_DIR="$(xdg XDG_CONFIG_HOME .config)/xagent"
+STATE_DIR="$(xdg XDG_STATE_HOME .local/state)/xagent"
 CONF="${NATS_CONF:-$CONF_DIR/nats-server.conf}"
 PIDFILE="$STATE_DIR/nats-server.pid"
 LOG="$STATE_DIR/nats-server.log"

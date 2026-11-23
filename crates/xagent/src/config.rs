@@ -1,4 +1,8 @@
-//! Host configuration: `--config`, else `$XAGENT_CONFIG`, else `~/.config/xagent/config.toml`.
+//! Host configuration: `--config`, else `$XAGENT_CONFIG`, else `$XDG_CONFIG_HOME/xagent/config.toml`.
+//!
+//! Default paths follow the XDG base directory spec: `$XDG_CONFIG_HOME`, `$XDG_DATA_HOME` and
+//! `$XDG_STATE_HOME` when set to an absolute path, else `~/.config`, `~/.local/share` and
+//! `~/.local/state`.
 //!
 //! Secrets are never in this file: it names a password or credentials file, read at startup.
 
@@ -128,6 +132,10 @@ impl NatsCredentials {
 pub struct Config {
     file: File,
     home: PathBuf,
+    /// `$XDG_DATA_HOME/xagent`: the default state database lives here.
+    data_dir: PathBuf,
+    /// `$XDG_STATE_HOME/xagent`: the default sockets live here.
+    state_dir: PathBuf,
     /// The config file that was read; `None` when the defaults apply.
     source: Option<PathBuf>,
 }
@@ -136,6 +144,16 @@ fn home() -> Result<PathBuf> {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .context("HOME is not set")
+}
+
+/// The xagent directory under an XDG base directory: `$var` when it is an absolute path (the spec
+/// ignores relative ones), else `home/fallback`.
+fn xdg_dir(var: &str, home: &Path, fallback: &str) -> PathBuf {
+    std::env::var_os(var)
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+        .unwrap_or_else(|| home.join(fallback))
+        .join("xagent")
 }
 
 /// `~/x` relative to `home`; anything else unchanged.
@@ -154,7 +172,10 @@ impl Config {
             Some(path) => (path.to_owned(), true),
             None => match std::env::var_os("XAGENT_CONFIG") {
                 Some(path) => (expand(Path::new(&path), &home), true),
-                None => (home.join(".config/xagent/config.toml"), false),
+                None => (
+                    xdg_dir("XDG_CONFIG_HOME", &home, ".config").join("config.toml"),
+                    false,
+                ),
             },
         };
         let (file, source) = match std::fs::read_to_string(&path) {
@@ -170,7 +191,13 @@ impl Config {
                 return Err(err).with_context(|| format!("reading config {}", path.display()));
             }
         };
-        Ok(Self { file, home, source })
+        Ok(Self {
+            file,
+            data_dir: xdg_dir("XDG_DATA_HOME", &home, ".local/share"),
+            state_dir: xdg_dir("XDG_STATE_HOME", &home, ".local/state"),
+            home,
+            source,
+        })
     }
 
     pub fn source(&self) -> Option<&Path> {
@@ -212,7 +239,7 @@ impl Config {
     pub fn state_db(&self) -> PathBuf {
         match &self.file.daemon.state_db {
             Some(path) => expand(path, &self.home),
-            None => self.home.join(".local/share/xagent/xagent.db"),
+            None => self.data_dir.join("xagent.db"),
         }
     }
 
@@ -254,7 +281,7 @@ impl Config {
     pub fn socket(&self) -> PathBuf {
         match &self.file.daemon.socket {
             Some(path) => expand(path, &self.home),
-            None => self.home.join(".local/state/xagent/xagentd.sock"),
+            None => self.state_dir.join("xagentd.sock"),
         }
     }
 
