@@ -1,0 +1,32 @@
+# xagent 2.0 host configuration: copy to ~/.config/xagent/config.toml (or set XAGENT_CONFIG,
+# or pass --config). Machine-level. Never commit a filled-in copy: it points at credential files.
+# Every key is optional; the values shown are the defaults unless marked <placeholder>.
+# Unknown keys are refused.
+
+# host_id = "workstation-a"            # default: the short hostname
+
+[nats]
+servers = ["nats://127.0.0.1:4222"]    # LAN: ["tls://nats-host.local:4222"]
+# user and password_file go together. The password lives in its own 0600 file, never here.
+# user = "xagent"                      # <placeholder>
+# password_file = "~/.config/xagent/nats.password"
+# tls_ca = "~/.config/xagent/ca.pem"   # needed when the servers use tls:// with a private CA
+
+[daemon]
+# socket = "~/.local/state/xagent/xagentd.sock"   # the MCP socket (mcp.sock) sits next to it
+# state_db = "~/.local/share/xagent/xagent.db"
+
+[notify]
+# wake = true                          # wake an idle agent on new unread messages (fixed text only)
+# wake_min_interval_seconds = 120      # at most one wake per agent per interval
+# wake_max_wait_seconds = 1800         # drop a wake that finds no idle moment this long
+# claude_sessions_dir = "~/.claude/sessions"
+# codex_control_socket = "~/.codex/app-server-control/app-server-control.sock"
+# dsh_url = "http://127.0.0.1:3080"    # loopback http only: dsh's login token is sent there
+# dsh_web_log = "~/.dsh/web.log"       # dsh prints its rotating login token here
+
+# A conversation running inside a project directory joins the project's root topic. The most
+# specific path wins; the topic is one token (a-z 0-9 _ -).
+# [[projects]]
+# path = "~/projects/editor-auto"
+# topic = "editor-auto"

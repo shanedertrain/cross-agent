@@ -1,0 +1,24 @@
+# ~/.codex/config.toml (or a trusted project's .codex/config.toml)
+[mcp_servers.xagent]
+command = "/home/<user>/.local/bin/xagent"
+args = ["mcp", "--client", "codex"]
+startup_timeout_sec = 20
+tool_timeout_sec = 30
+
+# ~/.codex/hooks.json: end-of-turn inbox reminder. Codex asks once, in the TUI, to trust a new
+# or changed hook ("Hooks need review"); an untrusted hook does not run.
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "/home/<user>/.local/bin/xagent hook codex-stop",
+            "timeout": 10,
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  }
+}

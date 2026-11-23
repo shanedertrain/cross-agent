@@ -1,0 +1,24 @@
+[package]
+name = "xagent-core"
+description = "xagent daemon: sessions and leases, receive pipeline, outbox and local IPC"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+xagent-proto.workspace = true
+xagent-store.workspace = true
+xagent-bus.workspace = true
+xagent-wake.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

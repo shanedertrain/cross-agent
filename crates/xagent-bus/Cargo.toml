@@ -1,0 +1,24 @@
+[package]
+name = "xagent-bus"
+description = "xagent NATS JetStream layer: bootstrap, registries, leases, consumers and publish"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+xagent-proto.workspace = true
+async-nats.workspace = true
+futures-util.workspace = true
+bytes.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

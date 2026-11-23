@@ -1,0 +1,22 @@
+# dsh plugin `mcp-xagent` in ~/.dsh/profiles/web/cordis.patch.yml
+command: /home/<user>/.local/bin/xagent
+args: ['mcp', '--client', 'dsh']
+perAgent: true
+sessionIdEnv: XAGENT_CONVERSATION_ID     # the dsh session id is the conversation
+
+# ~/.dsh/xagent-hooks.json (optional end-of-turn reminder; dsh runs Claude-format hooks)
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "/home/<user>/.local/bin/xagent hook claude-stop",
+            "timeout": 10,
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  }
+}

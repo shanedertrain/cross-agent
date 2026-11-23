@@ -1,0 +1,55 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "2.0.0"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT"
+repository = "https://github.com/shanedertrain/cross-agent"
+authors = ["Cameron Basham"]
+readme = "README.md"
+
+[workspace.dependencies]
+xagent-proto = { path = "crates/xagent-proto" }
+xagent-store = { path = "crates/xagent-store" }
+xagent-bus = { path = "crates/xagent-bus" }
+xagent-core = { path = "crates/xagent-core" }
+xagent-wake = { path = "crates/xagent-wake" }
+xagent-mcp = { path = "crates/xagent-mcp" }
+
+anyhow = "1"
+bytes = "1"
+async-nats = { version = "0.53", default-features = false, features = ["jetstream", "kv", "ring", "server_2_10", "server_2_11", "server_2_12", "server_2_14"] }
+clap = { version = "4", features = ["derive"] }
+futures-util = "0.3"
+gethostname = "1"
+jiff = "1"
+rmcp = { version = "3.11", default-features = false, features = ["server", "macros"] }
+rusqlite = { version = "0.43", features = ["bundled", "fallible_uint"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha1 = "0.10"
+sha2 = "0.10"
+tempfile = "3"
+thiserror = "2"
+time = "0.3"
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "io-std", "sync", "time", "signal"] }
+toml = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+uuid = { version = "1", features = ["v4"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"

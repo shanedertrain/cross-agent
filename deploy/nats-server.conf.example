@@ -1,0 +1,45 @@
+# nats-server configuration for xagent (single server, JetStream, authenticated).
+# Generated for real (with a random password) by scripts/setup-nats.sh into ~/.config/xagent/nats-server.conf.
+
+# Loopback only for a single host. For a LAN, bind the LAN address and enable TLS below.
+listen: 127.0.0.1:4222
+# listen: 0.0.0.0:4222
+
+server_name: xagent-nats
+
+# Monitoring: keep on loopback or a trusted address only.
+http: 127.0.0.1:8222
+
+max_payload: 1MB
+
+jetstream {
+  store_dir: "/home/<user>/.local/share/xagent/nats"   # <placeholder> directory must be 0700
+  max_file_store: 4GB
+  max_memory_store: 256MB
+}
+
+# No anonymous access. One user per host (or one shared user on a small LAN).
+# The password may be a bcrypt hash (`nats server passwd` from the nats CLI); a plain value
+# is acceptable when this file is 0600 on the server host.
+authorization {
+  users = [
+    {
+      user: xagent
+      password: "<placeholder>"
+      permissions: {
+        # protocol subjects plus exactly what JetStream + KV need
+        publish: ["xagent.v1.>", "$JS.API.>", "$JS.ACK.>", "$KV.XAGENT_TOPICS.>", "$KV.XAGENT_AGENTS.>", "$KV.XAGENT_LEASES.>", "$KV.XAGENT_SUBSCRIPTIONS.>", "_INBOX.>"]
+        subscribe: ["xagent.v1.>", "_INBOX.>", "$KV.XAGENT_TOPICS.>", "$KV.XAGENT_AGENTS.>", "$KV.XAGENT_LEASES.>", "$KV.XAGENT_SUBSCRIPTIONS.>"]
+      }
+    }
+  ]
+}
+
+# TLS for anything beyond a fully trusted isolated LAN. `scripts/setup-nats.sh --tls` makes the CA
+# and a server certificate that rustls accepts (strict X.509: CA keyUsage keyCertSign,cRLSign and
+# pathlen 0; server keyUsage digitalSignature, EKU serverAuth, SANs for every name and address
+# clients use). Clients set `tls_ca` to ca.pem and use tls:// URLs.
+# tls {
+#   cert_file: "/home/<user>/.config/xagent/pki/server.pem"
+#   key_file:  "/home/<user>/.config/xagent/pki/server-key.pem"
+# }

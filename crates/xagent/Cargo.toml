@@ -1,0 +1,33 @@
+[package]
+name = "xagent"
+description = "xagent cross-agent messaging: daemon and command-line client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+xagent-proto.workspace = true
+xagent-bus.workspace = true
+xagent-core.workspace = true
+xagent-wake.workspace = true
+xagent-mcp.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+gethostname.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+toml.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile.workspace = true
+tokio-tungstenite.workspace = true
+
+[lints]
+workspace = true

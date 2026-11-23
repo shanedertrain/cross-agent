@@ -1,0 +1,51 @@
+# .mcp.json (project), or: claude mcp add -s user xagent -- /home/<user>/.local/bin/xagent mcp --client claude-code
+{
+  "mcpServers": {
+    "xagent": {
+      "args": [
+        "mcp",
+        "--client",
+        "claude-code"
+      ],
+      "command": "/home/<user>/.local/bin/xagent",
+      "type": "stdio"
+    }
+  }
+}
+
+# Idle sessions are woken through Claude's own cross-session inbox; no launch flag is needed.
+# ~/.claude/settings.json: end-of-turn inbox reminder, and SendMessage mirrored to the bus
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "/home/<user>/.local/bin/xagent hook claude-sendmessage",
+            "timeout": 10,
+            "type": "command"
+          }
+        ],
+        "matcher": "SendMessage"
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "/home/<user>/.local/bin/xagent hook claude-stop",
+            "timeout": 10,
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  }
+}
+
+# ~/.claude/settings.json, optional: deliver the wake line without holding it for the user.
+# A bypass-mode session holds messages from senders that attest no permission mode. "accept"
+# applies to EVERY cross-session message, not only xagent's: see docs/installation.md first.
+{
+  "crossSessionInbound": "accept"
+}
