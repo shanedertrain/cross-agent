@@ -86,6 +86,25 @@ impl BusError {
     }
 }
 
+/// The message stream's broker-wide limits, shared by every host. Whichever is reached first
+/// removes the oldest messages (discard policy `old`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamLimits {
+    /// Age at which the broker deletes a message (`max_age`).
+    pub retention: Duration,
+    /// Size cap of the whole stream (`max_bytes`).
+    pub max_bytes: i64,
+}
+
+impl StreamLimits {
+    fn of(config: &jetstream::stream::Config) -> Self {
+        Self {
+            retention: config.max_age,
+            max_bytes: config.max_bytes,
+        }
+    }
+}
+
 /// The outcome of an acknowledged publish.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Published {
@@ -111,28 +130,38 @@ impl Bus {
         self.lease_ttl
     }
 
-    /// The message stream's retention (`max_age`) in force on the broker, read live.
+    /// The message stream's limits in force on the broker, read live.
     ///
     /// # Errors
     ///
     /// [`BusError::Nats`] when the stream cannot be read.
-    pub async fn retention(&self) -> Result<Duration, BusError> {
+    pub async fn stream_limits(&self) -> Result<StreamLimits, BusError> {
         let mut stream = self.js.get_stream(STREAM).await.map_err(BusError::nats)?;
         let info = stream.info().await.map_err(BusError::nats)?;
-        Ok(info.config.max_age)
+        Ok(StreamLimits::of(&info.config))
     }
 
-    /// Sets the message stream's retention on the broker, for every host; returns the old value.
-    /// Messages older than the new value are removed by the broker.
+    /// Changes the message stream's limits on the broker, for every host (a `None` keeps that
+    /// limit); returns the previous limits. The broker removes the oldest messages at once until
+    /// the stream is within the new limits.
     ///
     /// # Errors
     ///
     /// [`BusError::Nats`] when the stream cannot be read or updated.
-    pub async fn set_retention(&self, retention: Duration) -> Result<Duration, BusError> {
+    pub async fn set_stream_limits(
+        &self,
+        retention: Option<Duration>,
+        max_bytes: Option<i64>,
+    ) -> Result<StreamLimits, BusError> {
         let mut stream = self.js.get_stream(STREAM).await.map_err(BusError::nats)?;
         let mut config = stream.info().await.map_err(BusError::nats)?.config.clone();
-        let old = config.max_age;
-        config.max_age = retention;
+        let old = StreamLimits::of(&config);
+        if let Some(retention) = retention {
+            config.max_age = retention;
+        }
+        if let Some(max_bytes) = max_bytes {
+            config.max_bytes = max_bytes;
+        }
         self.js
             .update_stream(config)
             .await

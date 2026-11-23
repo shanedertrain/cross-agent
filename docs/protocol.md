@@ -18,7 +18,7 @@ Three layers: the NATS wire (shared by every host), the MCP tools (what models c
 
 | Resource | Settings |
 |---|---|
-| Stream `XAGENT_MESSAGES` | Subjects `xagent.v1.chat.>`, `xagent.v1.dm.>`; limits retention, file storage, 1 replica; max age 7 d, max bytes 1 GiB, discard old, duplicate window 10 min, max message size 17408 (16384 cap + 1024 header slack) |
+| Stream `XAGENT_MESSAGES` | Subjects `xagent.v1.chat.>`, `xagent.v1.dm.>`; limits retention, file storage, 1 replica; max age 7 d and max bytes 1 GiB at creation (the operator's to change: `xagent retention`; daemons adopt the stream's values), discard old, duplicate window 10 min, max message size 17408 (16384 cap + 1024 header slack) |
 | KV `XAGENT_TOPICS` | Key `<ws>.<topic>`, value `xagent.topic.v1`, history 5 |
 | KV `XAGENT_AGENTS` | Key `<ws>.<agent_id>`, value `xagent.agent.v1`, history 5 |
 | KV `XAGENT_LEASES` | Key `<ws>.<agent_id>`, value `xagent.lease.v1`, history 1; bucket `max_age` 30 s is the lease TTL: a present key is a live lease |
@@ -131,4 +131,4 @@ session. Methods follow the MCP tool names (`whoami`, `inbox_status`, `message_s
 | `session_open`, `session_update` | no / yes | Bind a conversation; update its display name |
 | `stop_check` | no | Stop hooks: should this conversation read its inbox before stopping |
 | `sendmessage_mirror` | no | The `SendMessage` hook: log a send on the `sendmessage` topic |
-| `gc`, `recover` | no | Retention pass; rebuild inboxes from JetStream |
+| `gc`, `retention`, `recover` | no | Local retention pass; show or set the stream's retention and size cap; rebuild inboxes from JetStream |

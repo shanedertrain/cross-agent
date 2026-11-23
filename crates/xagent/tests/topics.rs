@@ -439,13 +439,14 @@ fn recover_rebuilds_a_wiped_inbox() {
     assert_eq!(again["agents"][0]["inserted"], 0, "idempotent: {again}");
 }
 
-/// The broker's retention is one setting for every host, set with `xagent retention --days`;
-/// `[retention] local_days` keeps a host's local copies shorter, never longer.
+/// The broker's retention and stream size cap are one setting for every host, set with
+/// `xagent retention --days/--max-mb`; `[retention] local_days` keeps a host's local copies
+/// shorter, never longer. A daemon adopts the stream's values and never changes them.
 #[test]
 fn retention_is_set_on_the_broker_and_capped_per_host() {
     let nats = Nats::start();
     let a = Host::start_with(&nats, "host-a", "[retention]\nlocal_days = 2\n");
-    let b = Host::start_with(&nats, "host-b", "[retention]\nlocal_days = 30\n");
+    let mut b = Host::start_with(&nats, "host-b", "[retention]\nlocal_days = 30\n");
     let ready = |host: &Host| {
         wait_for(Duration::from_secs(15), "nats ready", || {
             host.run(&["status"])
@@ -460,6 +461,10 @@ fn retention_is_set_on_the_broker_and_capped_per_host() {
     assert_eq!(
         shown["broker_days"], 7,
         "a new stream starts at 7 days: {shown}"
+    );
+    assert_eq!(
+        shown["broker_max_mb"], 1024,
+        "a new stream starts at 1 GiB: {shown}"
     );
     assert_eq!(shown["local_days"], 2, "{shown}");
     assert_eq!(shown["effective_local_days"], 2, "{shown}");
@@ -481,4 +486,30 @@ fn retention_is_set_on_the_broker_and_capped_per_host() {
     assert_eq!(refused["code"], "invalid_argument", "{refused}");
     let bad = a.run(&["retention", "--days", "0"]).expect_err("zero days");
     assert_eq!(bad["code"], "invalid_argument", "{bad}");
+
+    let capped = ok(a.run(&["retention", "--max-mb", "64"]), "set the cap");
+    assert_eq!(capped["previous_broker_max_mb"], 1024, "{capped}");
+    assert_eq!(capped["broker_max_mb"], 64, "{capped}");
+    assert_eq!(
+        capped["broker_days"], 3,
+        "the cap alone keeps the retention"
+    );
+    for mb in ["0", "1048577"] {
+        let bad = a
+            .run(&["retention", "--max-mb", mb])
+            .expect_err("cap out of range");
+        assert_eq!(bad["code"], "invalid_argument", "{bad}");
+    }
+    // A restarted daemon adopts the broker's values: no mismatch, nothing reset.
+    b.crash();
+    b.spawn_daemon();
+    let status = ok(b.run(&["status"]), "status");
+    assert_eq!(
+        status["jetstream"]["mismatches"],
+        serde_json::json!([]),
+        "{status}"
+    );
+    let after = ok(b.run(&["retention"]), "show after restart");
+    assert_eq!(after["broker_max_mb"], 64, "{after}");
+    assert_eq!(after["broker_days"], 3, "{after}");
 }

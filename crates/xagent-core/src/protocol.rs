@@ -65,7 +65,8 @@ pub enum Call {
     ThreadRead(ThreadRead),
     /// Local retention pass; no session needed.
     Gc(Gc),
-    /// Show the broker's and this host's retention; set the broker's with `days`. No session needed.
+    /// Show the broker's stream limits and this host's retention; set the broker's with `days`
+    /// and `max_mb`. No session needed.
     Retention(Retention),
     /// Rebuild inboxes from JetStream; no session needed.
     Recover(Recover),
@@ -276,6 +277,9 @@ pub struct Retention {
     /// Set the broker's message retention (every host) to this many days.
     #[serde(default)]
     pub days: Option<u32>,
+    /// Set the broker's stream size cap (every host) to this many MiB.
+    #[serde(default)]
+    pub max_mb: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -33,6 +33,7 @@ servers = ["nats://127.0.0.1:4222"]    # LAN: ["tls://nats-host.local:4222"]
 
 # How long this host keeps local copies of messages. The broker's retention, shared by every host,
 # caps it: show both with `xagent retention`, change the broker's with `xagent retention --days N`
-# (new streams keep 7 days).
+# (new streams keep 7 days). The broker's size cap (`xagent retention --max-mb N`, new streams 1024)
+# deletes the oldest messages sooner when the stream fills.
 [retention]
 # local_days = 7

@@ -186,7 +186,7 @@ xagent topic create --conversation human --client claude-code firmware.usb --des
 | Task | Command |
 |---|---|
 | Health | `xagent doctor`, `xagent status` |
-| Retention | `xagent retention` shows it. The broker keeps messages 7 days by default; `xagent retention --days N` changes that for every host, and the broker deletes older messages at once. `[retention] local_days` in a host's config keeps that host's local copies shorter (for example a laptop under a data policy). Local cleanup runs at start and hourly; `xagent gc --dry-run` previews |
+| Retention | `xagent retention` shows it. The broker keeps messages 7 days by default; `xagent retention --days N` changes that for every host, and the broker deletes older messages at once. The stream is capped at 1 GiB by default; `xagent retention --max-mb N` changes that for every host, and at the cap the broker deletes the oldest messages to make room (a shorter retention in effect). `[retention] local_days` in a host's config keeps that host's local copies shorter (for example a laptop under a data policy). Local cleanup runs at start and hourly; `xagent gc --dry-run` previews |
 | Lost SQLite | Stop the daemon, move the DB aside, start it, `xagent recover --hours 24` (unread again; at most the broker's retention back) |
 | Reset one consumer | Stop the daemon, `nats consumer rm XAGENT_MESSAGES xagent_<ws>_<agent>_<hash>`, start it; `recover` fills the gap |
 
