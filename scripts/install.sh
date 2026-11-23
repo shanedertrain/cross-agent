@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Build and install xagent for the current user. Idempotent; never overwrites an existing config
-# or secret; never edits shell rc files; never starts or restarts a service.
+# Build and install xagent and its systemd user unit for the current user. Idempotent; never
+# overwrites an existing config or secret; never edits shell rc files; never starts or restarts a
+# service. scripts/setup-nats.sh installs nats-server and its unit.
 #
 #   scripts/install.sh [--prefix DIR]     (default ~/.local: binary in DIR/bin)
 set -euo pipefail
@@ -41,13 +42,13 @@ for var in XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME; do
   [[ "${!var:-}" == /* ]] && ENV_LINES+="Environment=$var=${!var}\n"
 done
 sed -e "s|^ExecStart=.*|${ENV_LINES}ExecStart=$BIN daemon|" "$REPO/deploy/systemd/xagentd.service" > "$UNIT_DIR/xagentd.service"
-cp "$REPO/deploy/systemd/nats-server.service" "$UNIT_DIR/nats-server.service"
-echo "==> installed units in $UNIT_DIR"
+echo "==> installed $UNIT_DIR/xagentd.service"
 
 cat <<NEXT
 
 Next steps:
-  scripts/setup-nats.sh [--tls]     nats-server, password, optional PKI (skip if you have a NATS server)
+  scripts/setup-nats.sh [--prefix $PREFIX] [--tls]
+                                    nats-server, its unit, password, optional PKI (skip if you have a NATS server)
   edit $CONF_DIR/config.toml        [nats] servers, user, password_file, tls_ca; [[projects]]
   systemctl --user daemon-reload && systemctl --user enable --now nats-server xagentd
   $BIN doctor

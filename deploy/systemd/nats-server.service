@@ -1,4 +1,5 @@
-# systemd --user unit. Install: cp to ~/.config/systemd/user/, then
+# systemd --user unit, a template: scripts/setup-nats.sh installs it in ~/.config/systemd/user/
+# with ExecStart naming the nats-server binary and config it set up. Then
 #   systemctl --user daemon-reload && systemctl --user enable --now nats-server
 # Only where systemd is actually PID 1 (not default WSL); otherwise use scripts/run-nats.sh.
 [Unit]

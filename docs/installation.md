@@ -27,7 +27,7 @@ scripts/install.sh              # --prefix DIR for somewhere other than ~/.local
 ```
 
 It runs `cargo build --release --locked -p xagent`, installs `~/.local/bin/xagent`, copies `config.example.toml` to
-`~/.config/xagent/config.toml` (0600) if absent, and installs the systemd user units `xagentd` and `nats-server`. It
+`~/.config/xagent/config.toml` (0600) if absent, and installs the systemd user unit `xagentd` running that binary. It
 starts nothing. Without the script: `cargo install --path crates/xagent --locked`.
 
 ## 2. NATS
@@ -35,9 +35,14 @@ starts nothing. Without the script: `cargo install --path crates/xagent --locked
 ### Single host
 
 ```bash
-scripts/setup-nats.sh           # nats-server binary, ~/.config/xagent/{nats-server.conf,nats.password}
+scripts/setup-nats.sh           # nats-server binary and unit, ~/.config/xagent/{nats-server.conf,nats.password}
 scripts/run-nats.sh start       # without systemd: background, pid and log in ~/.local/state/xagent/
 ```
+
+`setup-nats.sh` uses `~/.local/bin/nats-server` (`--prefix DIR`: `DIR/bin`, as for `install.sh`), else a
+`nats-server` on `PATH` such as a distro package, else downloads a checksum-verified release there. It installs the
+systemd user unit `nats-server` with `ExecStart` naming that binary and the generated config. `run-nats.sh` finds the
+binary the same way; set `NATS_SERVER` for one under another prefix.
 
 The generated config listens on `127.0.0.1:4222` (monitoring `127.0.0.1:8222`), stores JetStream in
 `~/.local/share/xagent/nats` (0700), and defines one user `xagent` with a random password. That user may publish and subscribe
