@@ -31,6 +31,13 @@ servers = ["nats://127.0.0.1:4222"]    # LAN: ["tls://nats-host.local:4222"]
 # dsh_url = "http://127.0.0.1:3080"    # loopback http only: dsh's login token is sent there
 # dsh_web_log = "~/.dsh/web.log"       # dsh prints its rotating login token here
 
+# Any other client (`xagent mcp --client my-agent`) is woken by a command or a webhook named here;
+# a client not listed is not woken. Exactly one of wake_command and wake_url. docs/integrating.md
+# [clients.my-agent]
+# wake_command = ["/home/you/bin/notify-my-agent"]     # the wake JSON on stdin
+# wake_url = "https://agents.example.com/xagent-wake"  # the wake JSON as a POST body; https, or http to loopback
+# wake_token_file = "~/.config/xagent/my-agent.token"   # sent as Authorization: Bearer <token>
+
 # A conversation running inside a project directory joins the project's root topic. The most
 # specific path wins; the topic is one token (a-z 0-9 _ -).
 # [[projects]]

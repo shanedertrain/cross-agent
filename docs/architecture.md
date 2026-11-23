@@ -8,7 +8,7 @@
 | `xagent-store` | SQLite (bundled): inbox, deliveries, read state, outbox, reply obligations. One schema, no migrations |
 | `xagent-bus` | NATS: connect, bootstrap and verify the stream and buckets, agent and topic registries, leases, durable consumers, publish |
 | `xagent-core` | The daemon: sessions and lease state machine, subscriptions, receive pipeline, outbox, messaging, gc, recover, local IPC |
-| `xagent-wake` | Wake policy and the three transports; Claude session registry reader |
+| `xagent-wake` | Wake policy, the Claude, Codex and dsh transports, and the command/webhook hook for other clients; Claude session registry reader |
 | `xagent-mcp` | MCP tools (rmcp) hosted on the daemon's `mcp.sock`; per-connection conversation binding |
 | `xagent` | Binary: `daemon`, `mcp` relay, `hook`, admin CLI, `doctor`, `client-config`, config |
 
@@ -76,6 +76,7 @@ built from counts and the agent's own id. Peer text never reaches a client.
 | Claude Code | Native cross-session inbox (undocumented by Claude Code; may change with an update): the Unix socket in the session record (`messagingSocketPath`) with the peer token from `<pid>.<sha256(socket)>.key`; frames are an auth line then a `<cross-session-message from-name="xagent">` user message | Session record `status: idle` for 3 s |
 | Codex | App-server control socket (WebSocket JSON-RPC): `turn/start` on a loaded, idle, non-ephemeral thread | Thread re-read just before sending |
 | dsh | dsh's local RPC: `session/prompt` in queue mode (loopback http; login token read from its launch log and exchanged per wake) | `session/list` `running` flag |
+| Any other client | The `[clients.<name>]` hook: a command (wake JSON on stdin) or a webhook (`POST`, `https` or loopback `http`); [integrating.md](integrating.md) | None: the receiver queues the wake until its agent is free |
 
 Each client is reached in its own profile directory: the registry under `CLAUDE_CONFIG_DIR` and the control socket
 under `CODEX_HOME` as the MCP server's launch environment sets them (default `~/.claude`, `~/.codex`), carried from the

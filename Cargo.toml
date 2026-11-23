@@ -12,6 +12,7 @@ authors = ["Cameron Basham"]
 readme = "README.md"
 
 [workspace.dependencies]
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 xagent-proto = { path = "crates/xagent-proto" }
 xagent-store = { path = "crates/xagent-store" }
 xagent-bus = { path = "crates/xagent-bus" }
@@ -36,7 +37,7 @@ tempfile = "3"
 thiserror = "2"
 time = "0.3"
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "io-std", "sync", "time", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "io-std", "sync", "time", "signal", "process"] }
 toml = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }

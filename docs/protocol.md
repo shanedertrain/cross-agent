@@ -116,7 +116,8 @@ relay   {"client":"claude-code","cwd":"/home/u/p","env":{"CLAUDE_PID":"4242","CL
 daemon  {"ok":true}     or     {"ok":false,"error":{"code":"...","message":"..."}}
 ```
 
-`client` is `claude-code` (alias `claude`), `codex` or `dsh`. `env` carries only the variables that are set among
+`client` is `claude-code` (alias `claude`), `codex`, `dsh`, or any other client name (`[a-z][a-z0-9-]*`, at most 32
+characters), which names its conversation in `XAGENT_CONVERSATION_ID` as dsh does. `env` carries only the variables that are set among
 `XAGENT_CONVERSATION_ID`, `XAGENT_SESSION_TITLE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_MESSAGING_SOCKET`, `CLAUDE_PID`,
 `CLAUDE_CONFIG_DIR`, `CODEX_HOME`. The hello is at most 64 KiB; after the answer the connection is MCP.
 
@@ -139,8 +140,19 @@ session. Methods follow the MCP tool names (`whoami`, `inbox_status`, `message_s
 | Method | Needs a session | Use |
 |---|---|---|
 | `ping`, `status` | no | Liveness; daemon health (`xagent status`) |
-| `window_open` | no | An MCP connection declares itself, for the unbound-window wake: `cwd`, `conversation` (if the launch names one) and `endpoint`, where the client is woken: `{"client":"claude-code","sessions_dir":"...","pid":4242}`, `{"client":"codex","control_socket":"..."}` or `{"client":"dsh"}`, resolved from the hello's `CLAUDE_CONFIG_DIR` / `CODEX_HOME`. A session the connection opens is woken at the same endpoint; one opened without a window, at the client's default (`~/.claude`, `~/.codex`) |
+| `window_open` | no | An MCP connection declares itself, for the unbound-window wake: `cwd`, `conversation` (if the launch names one) and `endpoint`, where the client is woken: `{"client":"claude-code","sessions_dir":"...","pid":4242}`, `{"client":"codex","control_socket":"..."}`, `{"client":"dsh"}` or `{"client":"other","name":"my-agent"}`, resolved from the hello's `CLAUDE_CONFIG_DIR` / `CODEX_HOME`. A session the connection opens is woken at the same endpoint; one opened without a window, at the client's default (`~/.claude`, `~/.codex`) |
 | `session_open`, `session_update` | no / yes | Bind a conversation; update its display name |
 | `stop_check` | no | Stop hooks: should this conversation read its inbox before stopping |
 | `sendmessage_mirror` | no | The `SendMessage` hook: log a send on the `sendmessage` topic |
 | `gc`, `retention`, `recover` | no | Local retention pass; show or set the stream's retention and size cap; rebuild inboxes from JetStream |
+
+## Wake hook payload `xagent.wake.v1`
+
+A client that is not built in is woken by the command or webhook of its `[clients.<name>]` config: the command gets
+one JSON line on stdin, the webhook a `POST` with it as the body (and `Authorization: Bearer` when a token file is
+set). Exit status 0 or a 2xx answer within 20 s counts as delivered.
+
+```json
+{"type":"xagent.wake.v1","client":"my-agent","conversation":"run-1842","workspace":"conversations",
+ "agent_id":"chat-...","text":"[xagent] 2 unread messages for conversations/chat-... (1 DM). Check your xagent inbox."}
+```

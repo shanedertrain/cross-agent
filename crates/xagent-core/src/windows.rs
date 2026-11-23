@@ -45,7 +45,7 @@ fn real(path: &Path) -> PathBuf {
 
 /// Adds the window target of `conversation` (the first window of an identity wins).
 fn add(targets: &mut BTreeMap<AgentId, Target>, conversation: Conversation, endpoint: &Endpoint) {
-    let agent = conversation_agent_id(endpoint.client(), &conversation);
+    let agent = conversation_agent_id(&endpoint.client(), &conversation);
     targets.entry(agent.clone()).or_insert_with(|| Target {
         key: agent.to_string(),
         workspace: WORKSPACE.to_owned(),
@@ -122,7 +122,7 @@ impl Daemon {
         for window in &windows {
             let conversation = match &window.endpoint {
                 Endpoint::Codex { .. } => continue,
-                Endpoint::Dsh => window.conversation.clone(),
+                Endpoint::Dsh | Endpoint::Other { .. } => window.conversation.clone(),
                 Endpoint::ClaudeCode { sessions_dir, pid } => sessions::find_record(
                     sessions_dir,
                     *pid,

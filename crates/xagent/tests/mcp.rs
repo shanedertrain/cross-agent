@@ -838,15 +838,22 @@ fn unbound_codex_thread_is_found_and_woken() {
     );
 }
 
-/// A daemon restart (an upgrade) does not cost a client its MCP server: the relay refuses calls
+/// A client of any name connects over MCP, and a daemon restart (an upgrade) does not cost it its
+/// MCP server: the relay refuses calls
 /// while the daemon is down, reconnects, replays the handshake, and the conversation keeps its
 /// identity and inbox.
 #[test]
-fn relay_survives_a_daemon_restart() {
+fn any_client_relays_and_survives_a_daemon_restart() {
     let nats = Nats::start();
     let mut host = Host::start(&nats, "host-a");
-    let mut dsh = Mcp::launch(&host, "dsh", &[("XAGENT_CONVERSATION_ID", "session 7")]);
+    // Any client name speaks MCP the way dsh does: the conversation comes from the environment.
+    let mut dsh = Mcp::launch(
+        &host,
+        "my-agent",
+        &[("XAGENT_CONVERSATION_ID", "session 7")],
+    );
     let before = dsh.call("whoami", json!({}));
+    assert_eq!(before["client"], "my-agent", "{before}");
 
     host.stop();
     let refused = dsh.raw_request("tools/call", json!({ "name": "whoami", "arguments": {} }));

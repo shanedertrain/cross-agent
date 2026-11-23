@@ -83,8 +83,9 @@ pub(crate) enum Launch {
     },
     /// `_meta.threadId` of each tool call; names from the Codex session index.
     Codex { codex_home: PathBuf },
-    /// dsh starts one server per session and names it in the environment.
-    Dsh {
+    /// dsh, and any other client: one server per conversation, named in the environment
+    /// (`XAGENT_CONVERSATION_ID`, `XAGENT_SESSION_TITLE`).
+    Env {
         conversation: Option<String>,
         title: Option<String>,
     },
@@ -112,7 +113,7 @@ impl Launch {
                     .var("CODEX_HOME")
                     .map_or_else(|| home.join(".codex"), PathBuf::from),
             },
-            Client::Dsh => Self::Dsh {
+            Client::Dsh | Client::Other(_) => Self::Env {
                 conversation: hello.var("XAGENT_CONVERSATION_ID").map(str::to_owned),
                 title: hello.var("XAGENT_SESSION_TITLE").map(str::to_owned),
             },

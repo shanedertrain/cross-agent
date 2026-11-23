@@ -14,26 +14,41 @@ const CONVERSATION_MAX_CHARS: usize = 128;
 /// Number of hex digits of the SHA-256 digest kept in a conversation agent id.
 const AGENT_DIGEST_HEX: usize = 24;
 
-/// The agent client a conversation belongs to.
+/// Longest accepted client name, in characters.
+const CLIENT_MAX_CHARS: usize = 32;
+
+/// The agent client a conversation belongs to: one of the built-in clients, or any other agent
+/// that names itself (`my-agent`) and reaches xagent through the generic launch contract.
 ///
 /// `claude` is accepted as an alias of `claude-code`; both derive the same agent id.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "&'static str")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub enum Client {
     ClaudeCode,
     Codex,
     Dsh,
+    /// Any other client: a lowercase name, `[a-z][a-z0-9-]*`, at most 32 characters.
+    Other(String),
 }
 
 impl Client {
     /// The canonical client string, used in identity hashing and on the wire.
-    pub fn as_str(self) -> &'static str {
+    pub fn as_str(&self) -> &str {
         match self {
             Self::ClaudeCode => "claude-code",
             Self::Codex => "codex",
             Self::Dsh => "dsh",
+            Self::Other(name) => name,
         }
     }
+}
+
+fn is_client_name(name: &str) -> bool {
+    name.len() <= CLIENT_MAX_CHARS
+        && name.starts_with(|c: char| c.is_ascii_lowercase())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
 impl FromStr for Client {
@@ -44,9 +59,13 @@ impl FromStr for Client {
             "claude-code" | "claude" => Ok(Self::ClaudeCode),
             "codex" => Ok(Self::Codex),
             "dsh" => Ok(Self::Dsh),
+            other if is_client_name(other) => Ok(Self::Other(other.to_owned())),
             other => Err(Error::new(
                 ErrorCode::InvalidArgument,
-                format!("unknown client {other:?}: use claude-code, codex or dsh"),
+                format!(
+                    "invalid client {other:?}: claude-code, codex, dsh, or a lowercase name \
+                     ([a-z][a-z0-9-]*, at most {CLIENT_MAX_CHARS} characters)"
+                ),
             )),
         }
     }
@@ -60,9 +79,9 @@ impl TryFrom<String> for Client {
     }
 }
 
-impl From<Client> for &'static str {
+impl From<Client> for String {
     fn from(client: Client) -> Self {
-        client.as_str()
+        client.as_str().to_owned()
     }
 }
 
@@ -130,7 +149,7 @@ impl fmt::Display for Conversation {
 }
 
 /// The stable agent id of a conversation: `chat-` + hex(sha256(client + "\0" + conversation))[:24].
-pub fn conversation_agent_id(client: Client, conversation: &Conversation) -> AgentId {
+pub fn conversation_agent_id(client: &Client, conversation: &Conversation) -> AgentId {
     let mut hasher = Sha256::new();
     hasher.update(client.as_str().as_bytes());
     hasher.update([0]);
@@ -148,7 +167,7 @@ mod tests {
     fn id(client: &str, conversation: &str) -> String {
         let client: Client = client.parse().expect("known client");
         let conversation: Conversation = conversation.parse().expect("valid conversation");
-        conversation_agent_id(client, &conversation).to_string()
+        conversation_agent_id(&client, &conversation).to_string()
     }
 
     // Expected values computed with the Python reference `xagent.identity.conversation_agent_id`.
@@ -183,7 +202,13 @@ mod tests {
             "claude".parse::<Client>().expect("alias").as_str(),
             "claude-code"
         );
-        assert!("cli".parse::<Client>().is_err());
+        assert_eq!(
+            "my-agent".parse::<Client>().expect("generic"),
+            Client::Other("my-agent".to_owned())
+        );
+        for bad in ["My-Agent", "-x", "a b", "", &"x".repeat(33)] {
+            assert!(bad.parse::<Client>().is_err(), "{bad:?}");
+        }
     }
 
     #[test]

@@ -118,7 +118,13 @@ impl Connection {
                     pid: *pid,
                 },
             ),
-            Launch::Dsh { conversation, .. } => (conversation.as_deref(), Endpoint::Dsh),
+            Launch::Env { conversation, .. } => (
+                conversation.as_deref(),
+                match &self.client {
+                    Client::Other(name) => Endpoint::Other { name: name.clone() },
+                    _ => Endpoint::Dsh,
+                },
+            ),
             Launch::Codex { codex_home } => (None, Endpoint::codex(codex_home)),
         };
         let mut ipc = Ipc::connect(&self.ipc_socket).await?;
@@ -178,7 +184,7 @@ impl Connection {
                         }),
                 }
             }
-            Launch::Dsh {
+            Launch::Env {
                 conversation: c, ..
             } => match bound {
                 Some(_) => Ok(None),
@@ -187,7 +193,12 @@ impl Connection {
                     .map(conversation)
                     .transpose()?
                     .map(Some)
-                    .ok_or_else(|| not_bound("dsh did not set XAGENT_CONVERSATION_ID")),
+                    .ok_or_else(|| {
+                        not_bound(format!(
+                            "{} did not set XAGENT_CONVERSATION_ID",
+                            self.client
+                        ))
+                    }),
             },
         }
     }
@@ -200,7 +211,7 @@ impl Connection {
             } => sessions::find_record(sessions_dir, *pid, Some(conversation.as_str()))
                 .and_then(|r| r.display_name().map(str::to_owned)),
             Launch::Codex { codex_home } => codex::thread_name(codex_home, conversation.as_str()),
-            Launch::Dsh { title, .. } => title.clone(),
+            Launch::Env { title, .. } => title.clone(),
         }
     }
 
@@ -220,7 +231,7 @@ impl Connection {
             let opened = ipc
                 .call(Call::SessionOpen(SessionOpen {
                     conversation: target.clone(),
-                    client: self.client,
+                    client: self.client.clone(),
                     cwd: Some((*self.cwd).clone()),
                 }))
                 .await;

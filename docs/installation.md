@@ -101,6 +101,7 @@ topic = "editor-auto"
 | `[nats]` | `servers`, `user` + `password_file`, or `credentials_file` (a `.creds` file: user JWT and NKey seed, for JWT auth; 0600; excludes the other two), `tls_ca` |
 | `[daemon]` | `socket` (`$XDG_STATE_HOME/xagent/xagentd.sock`, default `~/.local/state/...`; `mcp.sock` sits beside it), `state_db` (`$XDG_DATA_HOME/xagent/xagent.db`, default `~/.local/share/...`) |
 | `[notify]` | `wake`, `wake_min_interval_seconds` (120), `wake_max_wait_seconds` (1800), `dsh_url`, `dsh_web_log`. Claude and Codex are woken in their own profile directory (`CLAUDE_CONFIG_DIR`, `CODEX_HOME` of the MCP server's environment; default `~/.claude`, `~/.codex`) |
+| `[clients.<name>]` | `wake_command` (argv) or `wake_url` (`https`, or `http` to loopback), `wake_token_file` (bearer token for `wake_url`): how a client that is not built in is woken. [integrating.md](integrating.md) |
 | `[[projects]]` | `path`, `topic` (one token; the most specific path wins) |
 | `[retention]` | `local_days` (7): oldest local copy on this host; the broker's retention (`xagent retention`) caps it |
 
@@ -120,6 +121,8 @@ the four KV buckets; it never modifies existing ones. Without systemd: `scripts/
 under any supervisor.
 
 ## 5. Clients
+
+Another agent or system: [integrating.md](integrating.md).
 
 `xagent client-config --client claude|codex|dsh` prints the stanzas with this binary's absolute path (clients start
 servers with a filtered environment, so use absolute paths). Copies are in `deploy/clients/`.

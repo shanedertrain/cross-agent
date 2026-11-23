@@ -320,3 +320,115 @@ fn sendmessage_hook_mirrors_the_send_to_its_topic() {
     assert_eq!(mirrored["kind"], "status");
     assert_eq!(mirrored["priority"], "low");
 }
+
+/// A one-request HTTP server on loopback; the raw request arrives on the channel.
+fn fake_webhook() -> (u16, Receiver<String>) {
+    use std::io::{BufRead, BufReader, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    let (tx, rx) = channel();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+            let (mut head, mut length) = (String::new(), 0);
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                    break;
+                }
+                if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    length = v.trim().parse().unwrap_or(0);
+                }
+                head.push_str(&line);
+            }
+            let mut body = vec![0; length];
+            reader.read_exact(&mut body).expect("body");
+            let _ = stream
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
+            if tx.send(head + &String::from_utf8_lossy(&body)).is_err() {
+                return;
+            }
+        }
+    });
+    (port, rx)
+}
+
+/// Any client name works without code: a session of `cmd-agent` is woken by its configured
+/// command (wake JSON on stdin), one of `hook-agent` by its webhook (POST, bearer token). Both get
+/// the counts line, never peer text.
+#[test]
+fn other_clients_are_woken_by_their_configured_command_and_webhook() {
+    let nats = Nats::start();
+    let files = tempfile::TempDir::new().expect("temp dir");
+    let out = files.path().join("wake.json");
+    let token = files.path().join("token");
+    std::fs::write(&token, "s3cret\n").expect("token file");
+    let (port, requests) = fake_webhook();
+    let host = Host::start_with(
+        &nats,
+        "host-a",
+        &format!(
+            "[clients.cmd-agent]\nwake_command = [\"sh\", \"-c\", \"cat > {}\"]\n\
+             [clients.hook-agent]\nwake_url = \"http://127.0.0.1:{port}/wake\"\n\
+             wake_token_file = \"{}\"\n",
+            out.display(),
+            token.display()
+        ),
+    );
+    let mut cmd = host.hold_as("run 1", "cmd-agent").expect("session");
+    let mut hook = host.hold_as("run 2", "hook-agent").expect("session");
+    let (cmd_id, hook_id) = (cmd.agent_id.clone(), hook.agent_id.clone());
+
+    dm(&host, "conv-alice", &cmd_id, "SECRET peer summary");
+    dm(&host, "conv-alice", &hook_id, "SECRET peer summary");
+    wait_unread(&mut cmd, 1);
+    wait_unread(&mut hook, 1);
+
+    let wake: Value = wait_for(Duration::from_secs(10), "the wake command", || {
+        serde_json::from_str(&std::fs::read_to_string(&out).ok()?).ok()
+    });
+    assert_eq!(
+        wake,
+        json!({
+            "type": "xagent.wake.v1",
+            "client": "cmd-agent",
+            "conversation": "run 1",
+            "workspace": "conversations",
+            "agent_id": cmd_id,
+            "text": format!("[xagent] 1 unread message for conversations/{cmd_id} (1 DM). Check your xagent inbox."),
+        })
+    );
+
+    let request = requests
+        .recv_timeout(Duration::from_secs(10))
+        .expect("a webhook POST");
+    assert!(request.starts_with("POST /wake HTTP/1.1\r\n"), "{request}");
+    assert!(
+        request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer s3cret\r\n"),
+        "{request}"
+    );
+    let body: Value =
+        serde_json::from_str(&request[request.find('{').expect("JSON body")..]).expect("JSON");
+    assert_eq!(body["client"], "hook-agent");
+    assert_eq!(body["agent_id"], json!(hook_id));
+    assert!(
+        !request.contains("SECRET"),
+        "peer text never reaches the client"
+    );
+
+    // The CLI acts as any client too, and the identity follows the client name.
+    let who = host
+        .run(&[
+            "whoami",
+            "--conversation",
+            "run 1",
+            "--client",
+            "other-agent",
+        ])
+        .expect("whoami");
+    assert_eq!(who["client"], "other-agent");
+    assert_ne!(who["agent_id"], json!(cmd_id));
+}

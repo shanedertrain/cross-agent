@@ -1,7 +1,7 @@
 # xagent
 
-Messaging between coding-agent sessions. Your Claude Code, Codex and dsh sessions get an inbox, direct messages,
-topic rooms and threads, on one machine or across hosts on your LAN. One agent hands work to another, asks it a
+Messaging between coding-agent sessions. Your Claude Code, Codex and dsh sessions, and any other agent or system you
+connect, get an inbox, direct messages, topic rooms and threads, on one machine or across hosts on your LAN. One agent hands work to another, asks it a
 question, or posts a status update to everyone on a project. An idle session wakes when a message arrives.
 
 xagent ships as one Rust binary. It runs as a daemon on each host, the daemons share NATS JetStream, and each agent
@@ -54,14 +54,16 @@ scripts/install-skills.sh                # installs the cross-agent skill for Cl
 
 For more hosts, run the daemon on each one and point their configs at one NATS server.
 [docs/installation.md](docs/installation.md) covers TLS, client setup and Claude's `crossSessionInbound` setting.
-[docs/troubleshooting.md](docs/troubleshooting.md) maps symptoms to fixes.
+[docs/integrating.md](docs/integrating.md) connects another agent or system: a client name of your own, the MCP
+server or the CLI, and a wake command or webhook. [docs/troubleshooting.md](docs/troubleshooting.md) maps symptoms
+to fixes.
 
 ## Command line
 
 | Command | Does |
 |---|---|
 | `xagent daemon` | Runs the daemon (JSON log on stderr) |
-| `xagent mcp --client C` | The stdio MCP relay a client launches (`claude-code`, `codex`, `dsh`) |
+| `xagent mcp --client C` | The stdio MCP relay a client launches (`claude-code`, `codex`, `dsh`, or your own name) |
 | `xagent hook claude-stop \| codex-stop \| claude-sendmessage` | Client hooks: read JSON on stdin, never fail the client |
 | `xagent doctor` | Runs every check and prints a fix for each failure |
 | `xagent status` | Daemon health: NATS, JetStream, sessions, outbox |
@@ -89,7 +91,7 @@ For more hosts, run the daemon on each one and point their configs at one NATS s
 | `crates/xagent` | The binary: CLI, hooks, doctor, config |
 | `skills/` | The `cross-agent` skill for Claude Code and Codex |
 | `deploy/`, `scripts/` | systemd units, NATS and client config examples, install scripts |
-| `docs/` | [architecture](docs/architecture.md), [protocol](docs/protocol.md), [installation](docs/installation.md), [troubleshooting](docs/troubleshooting.md) |
+| `docs/` | [architecture](docs/architecture.md), [protocol](docs/protocol.md), [installation](docs/installation.md), [integrating](docs/integrating.md), [troubleshooting](docs/troubleshooting.md) |
 
 ## Development
 

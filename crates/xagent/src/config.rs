@@ -6,6 +6,7 @@
 //!
 //! Secrets are never in this file: it names a password or credentials file, read at startup.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -13,7 +14,8 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use xagent_bus::{NatsAuth, NatsSettings, UserPassword};
 use xagent_core::{DaemonConfig, Project};
-use xagent_wake::WakeConfig;
+use xagent_proto::Client;
+use xagent_wake::{Hook, WakeConfig};
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -29,6 +31,22 @@ struct File {
     projects: Vec<ProjectSection>,
     #[serde(default)]
     retention: RetentionSection,
+    #[serde(default)]
+    clients: BTreeMap<String, ClientSection>,
+}
+
+/// `[clients.<name>]`: how a client that is not built in is woken. Exactly one of `wake_command`
+/// and `wake_url`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClientSection {
+    #[serde(rename = "wake_command")]
+    command: Option<Vec<String>>,
+    #[serde(rename = "wake_url")]
+    url: Option<String>,
+    /// File holding a bearer token for `wake_url`.
+    #[serde(rename = "wake_token_file")]
+    token_file: Option<PathBuf>,
 }
 
 /// `[retention]`: how long this host keeps local copies. The broker's retention, shared by every
@@ -266,7 +284,43 @@ impl Config {
             );
             wake.dsh_url.clone_from(url);
         }
+        for (name, section) in &self.file.clients {
+            wake.hooks.insert(name.clone(), self.hook(name, section)?);
+        }
         Ok(wake)
+    }
+
+    fn hook(&self, name: &str, section: &ClientSection) -> Result<Hook> {
+        let at = format!("[clients.{name}]");
+        anyhow::ensure!(
+            matches!(name.parse::<Client>(), Ok(Client::Other(_))),
+            "{at}: a client name is lowercase [a-z][a-z0-9-]* and not a built-in client \
+             (claude-code, codex, dsh have their own wake transports)"
+        );
+        let token = section
+            .token_file
+            .as_ref()
+            .map(|path| {
+                let path = expand(path, &self.home);
+                std::fs::read_to_string(&path)
+                    .map(|t| t.trim().to_owned())
+                    .with_context(|| format!("{at} wake_token_file {}", path.display()))
+            })
+            .transpose()?;
+        match (&section.command, &section.url) {
+            (Some(argv), None) => {
+                anyhow::ensure!(token.is_none(), "{at}: wake_token_file goes with wake_url");
+                anyhow::ensure!(
+                    argv.first().is_some_and(|p| !p.is_empty()),
+                    "{at}: wake_command needs a program"
+                );
+                Ok(Hook::Command(argv.clone()))
+            }
+            (None, Some(url)) => {
+                Hook::webhook(url, token).map_err(|e| anyhow::anyhow!("{at}: {e}"))
+            }
+            _ => anyhow::bail!("{at}: set exactly one of wake_command and wake_url"),
+        }
     }
 
     /// The daemon socket the CLI talks to.

@@ -84,7 +84,7 @@ impl Rpc {
         let port = url.port_or_known_default().unwrap_or(80);
         let token = latest_token(&log, port)
             .ok_or_else(|| WakeError::Protocol("no dsh launch token in the launch log".into()))?;
-        let http = reqwest::Client::builder()
+        let http = crate::http_builder()
             .cookie_store(true)
             .no_proxy()
             .timeout(TIMEOUT)

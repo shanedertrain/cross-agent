@@ -45,8 +45,9 @@ enum Command {
     Doctor,
     /// Print the MCP entry and hooks stanza for a client's configuration.
     ClientConfig {
+        /// `claude`, `codex`, `dsh`, or the name of any other client.
         #[arg(long)]
-        client: client_config::ClientName,
+        client: ClientKind,
     },
     /// Client hook (reads the hook JSON on stdin; never fails the client).
     Hook {
@@ -55,7 +56,7 @@ enum Command {
     },
     /// MCP server for an agent client (stdio): relays to the daemon, which serves the tools.
     Mcp {
-        /// claude-code (or claude), codex, dsh.
+        /// claude-code (or claude), codex, dsh, or any other client name (docs/integrating.md).
         #[arg(long)]
         client: ClientKind,
     },
@@ -233,7 +234,7 @@ struct SessionArgs {
     /// The client's native conversation id.
     #[arg(long)]
     conversation: Conversation,
-    /// claude-code (or claude), codex, dsh.
+    /// claude-code (or claude), codex, dsh, or any other client name (docs/integrating.md).
     #[arg(long)]
     client: ClientKind,
     /// The conversation's working directory (joins its project's root topic).
@@ -534,7 +535,7 @@ async fn main() -> ExitCode {
         Command::ClientConfig { client } => {
             let exe = std::env::current_exe()
                 .map_or_else(|_| "xagent".to_owned(), |path| path.display().to_string());
-            println!("{}", client_config::render(client, &exe));
+            println!("{}", client_config::render(&client, &exe));
             return ExitCode::SUCCESS;
         }
         _ => {}

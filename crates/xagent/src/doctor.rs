@@ -12,7 +12,7 @@ use std::time::Duration;
 use serde_json::Value;
 use xagent_core::protocol::Call;
 
-use xagent_wake::{ClaudeInbox, Endpoint};
+use xagent_wake::{ClaudeInbox, Endpoint, Hook};
 
 use crate::config::Config;
 use xagent_core::client::Client;
@@ -315,7 +315,7 @@ fn wake_endpoints(
             Endpoint::Codex { control_socket } => {
                 codex.insert(control_socket);
             }
-            Endpoint::Dsh => {}
+            Endpoint::Dsh | Endpoint::Other { .. } => {}
         }
     }
     (claude, codex)
@@ -359,6 +359,39 @@ fn wake_checks(config: &Config, status: Option<&Value>, report: &mut Report) {
             format!("no launch log at {}", wake.dsh_web_log.display()),
         );
     }
+    for (name, hook) in &wake.hooks {
+        match hook {
+            Hook::Command(argv) => match find_program(&argv[0]) {
+                Some(path) => report.add(
+                    "wake hook",
+                    Verdict::Pass,
+                    format!("{name}: {}", path.display()),
+                ),
+                None => report.add(
+                    "wake hook",
+                    Verdict::Fail,
+                    format!(
+                        "{name}: {} not found: fix wake_command in [clients.{name}]",
+                        argv[0]
+                    ),
+                ),
+            },
+            // Not probed: a request would deliver a wake.
+            Hook::Webhook { url, .. } => {
+                report.add("wake hook", Verdict::Pass, format!("{name}: {url}"));
+            }
+        }
+    }
+}
+
+/// `program` as the wake command would start it: a path, or a name looked up on `PATH`.
+fn find_program(program: &str) -> Option<PathBuf> {
+    if program.contains('/') {
+        return Some(PathBuf::from(program)).filter(|p| p.is_file());
+    }
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|dir| dir.join(program))
+        .find(|p| p.is_file())
 }
 
 /// The live sessions of one Claude session registry and whether each inbox is reachable.

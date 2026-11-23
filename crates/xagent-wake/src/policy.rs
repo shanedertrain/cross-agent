@@ -7,7 +7,7 @@
 //! * Just before sending, the unread counts are re-read: nothing is sent when they dropped to
 //!   zero, or when the client's own Stop hook already reported exactly this state.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -21,6 +21,7 @@ use xagent_proto::{Client, Conversation};
 use crate::claude::ClaudeInbox;
 use crate::codex::CodexAppServer;
 use crate::dsh::Dsh;
+use crate::hook::Hook;
 use crate::text::Counts;
 
 /// Longest single sleep while waiting for the rate limit.
@@ -39,6 +40,8 @@ pub struct WakeConfig {
     /// dsh's local RPC endpoint (loopback only) and the launch log with its login token.
     pub dsh_url: String,
     pub dsh_web_log: PathBuf,
+    /// How each other client is woken (`[clients.<name>]`); a client not listed is not woken.
+    pub hooks: BTreeMap<String, Hook>,
 }
 
 impl WakeConfig {
@@ -50,6 +53,7 @@ impl WakeConfig {
             max_wait: Duration::from_secs(1800),
             dsh_url: "http://127.0.0.1:3080".to_owned(),
             dsh_web_log: home.join(".dsh/web.log"),
+            hooks: BTreeMap::new(),
         }
     }
 }
@@ -72,6 +76,10 @@ pub enum Endpoint {
         control_socket: PathBuf,
     },
     Dsh,
+    /// Any other client, woken by its configured [`Hook`].
+    Other {
+        name: String,
+    },
 }
 
 impl Endpoint {
@@ -96,6 +104,7 @@ impl Endpoint {
             Client::ClaudeCode => Self::claude_code(&home.join(".claude"), None),
             Client::Codex => Self::codex(&home.join(".codex")),
             Client::Dsh => Self::Dsh,
+            Client::Other(name) => Self::Other { name },
         }
     }
 
@@ -104,6 +113,7 @@ impl Endpoint {
             Self::ClaudeCode { .. } => Client::ClaudeCode,
             Self::Codex { .. } => Client::Codex,
             Self::Dsh => Client::Dsh,
+            Self::Other { name } => Client::Other(name.clone()),
         }
     }
 }
@@ -201,6 +211,7 @@ impl Inner {
             Endpoint::ClaudeCode { .. } => true,
             Endpoint::Codex { .. } => CodexAppServer::reaches(target),
             Endpoint::Dsh => self.dsh.reaches(target),
+            Endpoint::Other { name } => self.config.hooks.contains_key(name),
         }
     }
 
@@ -215,6 +226,7 @@ impl Inner {
                     .await
             }
             Endpoint::Dsh => self.dsh.ready(target).await,
+            Endpoint::Other { .. } => Readiness::Ready,
         }
     }
 
@@ -231,6 +243,10 @@ impl Inner {
                     .await
             }
             Endpoint::Dsh => self.dsh.send(target, text).await,
+            Endpoint::Other { name } => match self.config.hooks.get(name) {
+                Some(hook) => hook.send(target, text).await,
+                None => false,
+            },
         }
     }
 

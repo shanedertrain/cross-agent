@@ -99,7 +99,7 @@ pub(crate) struct Whoami {
     agent_id: String,
     instance_id: String,
     workspace: &'static str,
-    client: &'static str,
+    client: String,
     conversation: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     lease: Option<&'static str>,
@@ -214,10 +214,10 @@ impl Daemon {
         cwd: Option<&Path>,
         endpoint: Option<Endpoint>,
     ) -> Result<Arc<Session>, Error> {
-        let agent = conversation_agent_id(client, &conversation);
+        let agent = conversation_agent_id(&client, &conversation);
         let endpoint = endpoint
             .filter(|e| e.client() == client)
-            .unwrap_or_else(|| Endpoint::default_for(client, &self.config.home));
+            .unwrap_or_else(|| Endpoint::default_for(client.clone(), &self.config.home));
         let bus = self.require_bus("starting a session")?.clone();
         let session = loop {
             let closing = {
@@ -238,7 +238,7 @@ impl Daemon {
                     None => {
                         let session = Arc::new(Session::new(
                             agent.clone(),
-                            client,
+                            client.clone(),
                             conversation.clone(),
                             endpoint,
                             LeaseTiming::new(bus.lease_ttl()),
@@ -408,7 +408,7 @@ impl Daemon {
             agent_id: session.agent.to_string(),
             instance_id: session.instance_id.to_string(),
             workspace: WORKSPACE,
-            client: session.client.as_str(),
+            client: session.client.to_string(),
             conversation: session.conversation.to_string(),
             lease: (!session.may_consume()).then(|| session.phase().as_str()),
         }
