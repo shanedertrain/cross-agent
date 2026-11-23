@@ -10,6 +10,9 @@ servers = ["nats://127.0.0.1:4222"]    # LAN: ["tls://nats-host.local:4222"]
 # user and password_file go together. The password lives in its own 0600 file, never here.
 # user = "xagent"                      # <placeholder>
 # password_file = "~/.config/xagent/nats.password"
+# Or a .creds file (user JWT and NKey seed) for JWT auth, e.g. Synadia Cloud or a company cluster;
+# 0600. Excludes user and password_file.
+# credentials_file = "~/.config/xagent/nats.creds"
 # tls_ca = "~/.config/xagent/ca.pem"   # needed when the servers use tls:// with a private CA
 
 [daemon]

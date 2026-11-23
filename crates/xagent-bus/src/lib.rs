@@ -20,7 +20,7 @@ use bytes::Bytes;
 use xagent_proto::{AgentId, consumer_name};
 
 pub use bootstrap::{BootstrapReport, Mismatch};
-pub use connect::{Connection, NatsSettings, UserPassword, connect};
+pub use connect::{Connection, NatsAuth, NatsSettings, UserPassword, connect};
 pub use inbox::{Inbox, Incoming, Pull};
 pub use scan::Scanned;
 

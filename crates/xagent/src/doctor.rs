@@ -118,35 +118,38 @@ fn local_checks(config: &Config, report: &mut Report) {
         Err(err) => report.add("wake", Verdict::Fail, format!("{err:#}")),
     }
 
-    let (password_file, tls_ca) = config.nats_files();
-    match password_file {
-        None => report.add_fix(
+    match config.nats_credentials() {
+        Err(err) => report.add("nats credentials", Verdict::Fail, format!("{err:#}")),
+        Ok(None) => report.add_fix(
             "nats credentials",
             Verdict::Warn,
             "none configured (anonymous)",
-            "set [nats] user + password_file",
+            "set [nats] user + password_file, or credentials_file",
         ),
-        Some(path) => match owner_only(&path) {
-            None => report.add_fix(
-                "nats credentials",
-                Verdict::Fail,
-                format!("{} missing", path.display()),
-                "create it or fix the path in the config",
-            ),
-            Some(false) => report.add_fix(
-                "nats credentials",
-                Verdict::Warn,
-                format!("{} readable by group or others", path.display()),
-                format!("chmod 600 {}", path.display()),
-            ),
-            Some(true) => report.add(
-                "nats credentials",
-                Verdict::Pass,
-                format!("{} (0600)", path.display()),
-            ),
-        },
+        Ok(Some(credentials)) => {
+            let file = credentials.file();
+            match owner_only(file) {
+                None => report.add_fix(
+                    "nats credentials",
+                    Verdict::Fail,
+                    format!("{} missing", file.display()),
+                    "create it or fix the path in the config",
+                ),
+                Some(false) => report.add_fix(
+                    "nats credentials",
+                    Verdict::Warn,
+                    format!("{} readable by group or others", file.display()),
+                    format!("chmod 600 {}", file.display()),
+                ),
+                Some(true) => report.add(
+                    "nats credentials",
+                    Verdict::Pass,
+                    format!("{} (0600)", file.display()),
+                ),
+            }
+        }
     }
-    if let Some(ca) = tls_ca {
+    if let Some(ca) = config.nats_tls_ca() {
         let verdict = if ca.exists() {
             Verdict::Pass
         } else {

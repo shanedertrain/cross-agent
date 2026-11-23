@@ -221,3 +221,58 @@ fn dm_in_flight_across_a_crash_is_delivered_exactly_once() {
         "{again}"
     );
 }
+
+/// Runs `xagent daemon` on a host expected to refuse to start; returns its stderr.
+fn daemon_refuses(host: &Host) -> String {
+    let mut child = host
+        .command()
+        .arg("daemon")
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("daemon starts");
+    let status = wait_for(Duration::from_secs(10), "the daemon to exit", || {
+        child.try_wait().expect("daemon status")
+    });
+    assert!(!status.success(), "the daemon must refuse to run");
+    let mut stderr = String::new();
+    std::io::Read::read_to_string(&mut child.stderr.take().expect("stderr"), &mut stderr)
+        .expect("read stderr");
+    stderr
+}
+
+/// `[nats] credentials_file` excludes `user`/`password_file`; doctor and the daemon both say so.
+/// A credentials file that cannot be read stops the daemon at start, naming the file.
+#[test]
+fn nats_credentials_file_is_validated() {
+    let nats = Nats::start();
+    let both = Host::configure(
+        &nats,
+        "host-a",
+        "user = \"xagent\"\npassword_file = \"~/pw\"\ncredentials_file = \"~/x.creds\"\n",
+    );
+    let (code, report) = both.run_with_stdin(&["doctor"], "");
+    assert_eq!(code, Some(1), "{report}");
+    assert!(
+        report.contains("FAIL  nats credentials")
+            && report.contains("credentials_file excludes user and password_file"),
+        "{report}"
+    );
+    let stderr = daemon_refuses(&both);
+    assert!(
+        stderr.contains("credentials_file excludes user and password_file"),
+        "{stderr}"
+    );
+
+    let missing = Host::configure(&nats, "host-b", "credentials_file = \"~/x.creds\"\n");
+    let (_, report) = missing.run_with_stdin(&["doctor"], "");
+    assert!(
+        report.contains("FAIL  nats credentials") && report.contains("x.creds missing"),
+        "{report}"
+    );
+    let stderr = daemon_refuses(&missing);
+    let path = missing.dir().join("home/x.creds");
+    assert!(
+        stderr.contains(&format!("NATS credentials file {}", path.display())),
+        "{stderr}"
+    );
+}

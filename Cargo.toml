@@ -21,7 +21,7 @@ xagent-mcp = { path = "crates/xagent-mcp" }
 
 anyhow = "1"
 bytes = "1"
-async-nats = { version = "0.53", default-features = false, features = ["jetstream", "kv", "ring", "server_2_10", "server_2_11", "server_2_12", "server_2_14"] }
+async-nats = { version = "0.53", default-features = false, features = ["jetstream", "kv", "nkeys", "ring", "server_2_10", "server_2_11", "server_2_12", "server_2_14"] }
 clap = { version = "4", features = ["derive"] }
 futures-util = "0.3"
 gethostname = "1"

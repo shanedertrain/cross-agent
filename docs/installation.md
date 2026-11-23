@@ -47,6 +47,12 @@ only `xagent.v1.>`, `$JS.API.>`, `$JS.ACK.>`, the four `$KV.XAGENT_*` buckets (`
    host its own user in the server config so one credential can be revoked alone.
 4. Client hosts set `servers = ["tls://nats-host:4222"]` and `tls_ca` (below).
 
+### Hosted or company NATS (JWT)
+
+A server in operator mode (Synadia Cloud, or a cluster run with `nsc`) authenticates with a `.creds` file. Set
+`servers` to its URLs and `credentials_file` to the file (0600), instead of `user` and `password_file`. The account
+needs JetStream and the subjects listed above.
+
 ### PKI
 
 `--tls` makes an ECDSA P-256 CA and server certificate in `~/.config/xagent/pki/`. The client library (rustls) checks
@@ -80,13 +86,13 @@ topic = "editor-auto"
 | Section | Keys |
 |---|---|
 | top | `host_id` (default: short hostname; a label for diagnostics) |
-| `[nats]` | `servers`, `user`, `password_file`, `tls_ca` |
+| `[nats]` | `servers`, `user` + `password_file`, or `credentials_file` (a `.creds` file: user JWT and NKey seed, for JWT auth; 0600; excludes the other two), `tls_ca` |
 | `[daemon]` | `socket` (`~/.local/state/xagent/xagentd.sock`; `mcp.sock` sits beside it), `state_db` (`~/.local/share/xagent/xagent.db`) |
 | `[notify]` | `wake`, `wake_min_interval_seconds` (120), `wake_max_wait_seconds` (1800), `claude_sessions_dir`, `codex_control_socket`, `dsh_url`, `dsh_web_log` |
 | `[[projects]]` | `path`, `topic` (one token; the most specific path wins) |
 | `[retention]` | `local_days` (7): oldest local copy on this host; the broker's retention (`xagent retention`) caps it |
 
-Secrets never go in this file, only the path of the password file.
+Secrets never go in this file, only the path of the password or credentials file.
 
 ## 4. Services
 

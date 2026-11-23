@@ -93,8 +93,16 @@ impl Host {
         Self::start_with(nats, name, "")
     }
 
-    /// Like [`Host::start`], with `extra` appended to the config file (TOML tables).
+    /// Like [`Host::start`], with `extra` appended to the config file: keys before its first
+    /// table header belong to `[nats]`.
     pub fn start_with(nats: &Nats, name: &str, extra: &str) -> Self {
+        let mut host = Self::configure(nats, name, extra);
+        host.spawn_daemon();
+        host
+    }
+
+    /// A host with its config written and no daemon started.
+    pub fn configure(nats: &Nats, name: &str, extra: &str) -> Self {
         let dir = tempfile::Builder::new()
             .prefix("xa-host")
             .tempdir()
@@ -105,18 +113,21 @@ impl Host {
         std::fs::write(
             &config,
             format!(
-                "host_id = \"{name}\"\n[nats]\nservers = [\"{}\"]\n[daemon]\nsocket = \"{root}/run/x.sock\"\nstate_db = \"{root}/state/x.db\"\n{extra}\n",
+                "host_id = \"{name}\"\n[daemon]\nsocket = \"{root}/run/x.sock\"\nstate_db = \"{root}/state/x.db\"\n[nats]\nservers = [\"{}\"]\n{extra}\n",
                 nats.url
             ),
         )
         .expect("write config");
-        let mut host = Self {
+        Self {
             dir,
             config,
             daemon: None,
-        };
-        host.spawn_daemon();
-        host
+        }
+    }
+
+    /// The host's own directory (config, state, socket, and `home/`).
+    pub fn dir(&self) -> &Path {
+        self.dir.path()
     }
 
     pub fn command(&self) -> Command {
