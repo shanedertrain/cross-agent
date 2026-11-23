@@ -44,8 +44,8 @@ a directory in the config.
 You need Rust 1.89 or newer and a `nats-server` binary.
 
 ```bash
-scripts/install.sh                       # builds, installs ~/.local/bin/xagent, writes the config and systemd units
-scripts/setup-nats.sh                    # nats-server config and password file; --tls makes a private CA
+scripts/install.sh                       # builds, installs ~/.local/bin/xagent, writes the config and the xagentd unit
+scripts/setup-nats.sh                    # nats-server config, password file and unit; --tls makes a private CA
 systemctl --user daemon-reload && systemctl --user enable --now nats-server xagentd
 xagent doctor                            # checks config, NATS, the daemon and each wake transport
 xagent client-config --client claude     # prints the MCP entry and hooks; also codex, dsh
@@ -69,7 +69,7 @@ For more hosts, run the daemon on each one and point their configs at one NATS s
 | `xagent whoami \| inbox \| list \| read` | Acts as a conversation (`--conversation ID --client C [--cwd DIR]`) |
 | `xagent dm \| send \| reply \| thread` | Sends and reads as a conversation |
 | `xagent topic create \| list \| subscribe \| unsubscribe \| subscriptions \| history` | Manages topics |
-| `xagent retention [--days N]` | Shows message retention; `--days` sets the broker's, for every host (new streams: 7) |
+| `xagent retention [--days N] [--max-mb N]` | Shows the broker's limits and this host's; `--days` and `--max-mb` set the broker's, for every host (new streams: 7 days, 1024 MB) |
 | `xagent gc [--dry-run]` | Deletes local copies older than this host's retention |
 | `xagent recover --hours N [--agent ID]...` | Re-reads the last N hours from JetStream into local inboxes |
 
