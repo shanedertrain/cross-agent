@@ -21,8 +21,10 @@ The `cross-agent` skill and 15 MCP tools:
 | Rooms | `topic_list`, `topic_create`, `topic_subscribe`, `topic_unsubscribe`, `topic_subscriptions`, `topic_history` |
 
 The inbox tools cost context in three steps, so an agent reads counts first, then summaries, then only the bodies it
-picks. Each session joins its project's topic on its own: the git checkout's name (`infra`, `agent-fleet`), or a
-topic you map to a directory in the config.
+picks. Each session joins its project's topic on its own: the git checkout's name (`webapp`), or a topic you map to
+a directory in the config.
+
+<img alt="How topics work: a session's project topic comes from a configured path, else its git checkout's name, else scratch, and the session joins it on start. Each topic is one NATS subject; children such as webapp.api are opt-in with topic_subscribe, and a subscription starts at the current position, without history. message_send reaches every subscriber's inbox and reports receivers, warning when nobody receives; replies stay in their thread; topic_history reads old posts without adding them to the inbox." src="docs/diagram/topics.svg">
 
 ## Design
 
