@@ -1,8 +1,6 @@
 """xagent architecture, drawn with open-diagram (github.com/lukendeasy/open-diagram).
-Regenerate: open-diagram draw docs/diagram/architecture.py -o docs/diagram/architecture
-(set XAGENT_DIAGRAM_THEME=dark for the dark version)."""
-import os
-
+Regenerate: open-diagram draw docs/diagram/architecture.py -o docs/diagram/architecture"""
+from od_themes import dark
 from open_diagram import Diagram, Panel, Tile, Tiles
 
 CLIENTS = [Tile("Claude Code", sub="session"), Tile("Codex", sub="thread"), Tile("dsh", sub="session")]
@@ -14,13 +12,8 @@ OTHER = [Tile("xagent daemon"), Tile("Agent sessions")]
 
 
 def build() -> Diagram:
-    theme = None
-    if os.environ.get("XAGENT_DIAGRAM_THEME") == "dark":
-        from od_themes import dark
-        theme = dark()
-    kwargs = {"theme": theme} if theme else {}
     d = Diagram("How xagent connects agent sessions", subtitle="One daemon per host, NATS JetStream between hosts",
-                **kwargs)
+                theme=dark())
     (clients,), (daemon,), (nats,), (other,) = d.columns([
         [Panel("Agent sessions", Tiles(CLIENTS, cols=1), sub="one identity per conversation")],
         [Panel("xagent daemon", Tiles(DAEMON, cols=2), sub="xagent mcp relays each client")],

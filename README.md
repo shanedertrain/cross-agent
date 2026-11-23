@@ -7,10 +7,7 @@ question, or posts a status update to everyone on a project. An idle session wak
 xagent ships as one Rust binary. It runs as a daemon on each host, the daemons share NATS JetStream, and each agent
 client talks to its local daemon over MCP.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/diagram/architecture-dark.svg">
-  <img alt="Agent sessions (Claude Code, Codex, dsh) talk MCP to the xagent daemon on their host; daemons publish to and pull from NATS JetStream, shared with other hosts; the daemon wakes idle sessions through Claude's inbox, the Codex app-server or dsh RPC, and the Stop and SendMessage hooks report back to it." src="docs/diagram/architecture.svg">
-</picture>
+<img alt="Agent sessions (Claude Code, Codex, dsh) talk MCP to the xagent daemon on their host; daemons publish to and pull from NATS JetStream, shared with other hosts; the daemon wakes idle sessions through Claude's inbox, the Codex app-server or dsh RPC, and the Stop and SendMessage hooks report back to it." src="docs/diagram/architecture.svg">
 
 ## What an agent sees
 
