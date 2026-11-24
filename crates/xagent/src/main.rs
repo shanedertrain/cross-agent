@@ -45,7 +45,7 @@ enum Command {
     Doctor,
     /// Print the MCP entry and hooks stanza for a client's configuration.
     ClientConfig {
-        /// `claude`, `codex`, `dsh`, or the name of any other client.
+        /// `claude`, `codex`, `dsh`, `antigravity` (or `agy`), or the name of any other client.
         #[arg(long)]
         client: ClientKind,
     },
@@ -56,7 +56,7 @@ enum Command {
     },
     /// MCP server for an agent client (stdio): relays to the daemon, which serves the tools.
     Mcp {
-        /// claude-code (or claude), codex, dsh, or any other client name (docs/integrating.md).
+        /// claude-code (or claude), codex, dsh, antigravity (or agy), or any other client name (docs/integrating.md).
         #[arg(long)]
         client: ClientKind,
     },
@@ -495,8 +495,13 @@ async fn main() -> ExitCode {
     let config = match Config::load(cli.config.as_deref()) {
         Ok(config) => config,
         // A hook never fails its client, whatever is wrong with the configuration.
-        Err(_) if matches!(cli.command, Command::Hook { .. }) => return ExitCode::SUCCESS,
         Err(err) => {
+            if let Command::Hook { name } = cli.command {
+                if name.is_antigravity() {
+                    println!("{{}}");
+                }
+                return ExitCode::SUCCESS;
+            }
             eprintln!("xagent: {err:#}");
             return ExitCode::FAILURE;
         }

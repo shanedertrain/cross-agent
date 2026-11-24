@@ -56,6 +56,7 @@ sha256(`client` NUL `conversation`), always in the workspace `conversations`. `c
 | Claude Code | Live session record `$CLAUDE_CONFIG_DIR/sessions/<pid>.json` (default `~/.claude`) found by the Claude pid (follows `/clear`); `CLAUDE_CODE_SESSION_ID` as fallback |
 | Codex | `_meta.threadId` on every tool call |
 | dsh | `XAGENT_CONVERSATION_ID` set by dsh at launch |
+| Antigravity | Lifecycle hooks (`SessionStart`, `PreInvocation`) register `agy` parent pid → `conversationId` with the daemon (follows `/clear`, `/resume`, `/fork`); `XAGENT_CONVERSATION_ID` / `ANTIGRAVITY_CONVERSATION_ID` as fallback |
 
 An MCP connection binds at its first tool call and re-binds if the conversation changes. Binding acquires the agent's
 lease in `XAGENT_LEASES`: a key refreshed every 10 s whose bucket TTL (30 s) makes the NATS server expire it. Local
@@ -76,6 +77,7 @@ built from counts and the agent's own id. Peer text never reaches a client.
 | Claude Code | Native cross-session inbox (undocumented by Claude Code; may change with an update): the Unix socket in the session record (`messagingSocketPath`) with the peer token from `<pid>.<sha256(socket)>.key`; frames are an auth line then a `<cross-session-message from-name="xagent">` user message | Session record `status: idle` for 3 s |
 | Codex | App-server control socket (WebSocket JSON-RPC): `turn/start` on a loaded, idle, non-ephemeral thread | Thread re-read just before sending |
 | dsh | dsh's local RPC: `session/prompt` in queue mode (loopback http; login token read from its launch log and exchanged per wake) | `session/list` `running` flag |
+| Antigravity | `PreInvocation` + `Stop` lifecycle hooks, plus optional `[clients.antigravity]` wake command/webhook (e.g. desktop notification or App sidecar) | None for hook wake |
 | Any other client | The `[clients.<name>]` hook: a command (wake JSON on stdin) or a webhook (`POST`, `https` or loopback `http`); [integrating.md](integrating.md) | None: the receiver queues the wake until its agent is free |
 
 Each client is reached in its own profile directory: the registry under `CLAUDE_CONFIG_DIR` and the control socket

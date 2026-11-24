@@ -285,18 +285,23 @@ impl Config {
             wake.dsh_url.clone_from(url);
         }
         for (name, section) in &self.file.clients {
-            wake.hooks.insert(name.clone(), self.hook(name, section)?);
+            let (key, hook) = self.hook(name, section)?;
+            wake.hooks.insert(key, hook);
         }
         Ok(wake)
     }
 
-    fn hook(&self, name: &str, section: &ClientSection) -> Result<Hook> {
+    fn hook(&self, name: &str, section: &ClientSection) -> Result<(String, Hook)> {
         let at = format!("[clients.{name}]");
-        anyhow::ensure!(
-            matches!(name.parse::<Client>(), Ok(Client::Other(_))),
-            "{at}: a client name is lowercase [a-z][a-z0-9-]* and not a built-in client \
-             (claude-code, codex, dsh have their own wake transports)"
-        );
+        let parsed = name.parse::<Client>().ok();
+        let canonical = match parsed {
+            Some(Client::Antigravity) => Client::Antigravity.as_str().to_owned(),
+            Some(Client::Other(other)) => other,
+            _ => anyhow::bail!(
+                "{at}: a client name is lowercase [a-z][a-z0-9-]* and not claude-code, codex, \
+                 or dsh (which have their own wake transports)"
+            ),
+        };
         let token = section
             .token_file
             .as_ref()
@@ -307,20 +312,21 @@ impl Config {
                     .with_context(|| format!("{at} wake_token_file {}", path.display()))
             })
             .transpose()?;
-        match (&section.command, &section.url) {
+        let hook = match (&section.command, &section.url) {
             (Some(argv), None) => {
                 anyhow::ensure!(token.is_none(), "{at}: wake_token_file goes with wake_url");
                 anyhow::ensure!(
                     argv.first().is_some_and(|p| !p.is_empty()),
                     "{at}: wake_command needs a program"
                 );
-                Ok(Hook::Command(argv.clone()))
+                Hook::Command(argv.clone())
             }
             (None, Some(url)) => {
-                Hook::webhook(url, token).map_err(|e| anyhow::anyhow!("{at}: {e}"))
+                Hook::webhook(url, token).map_err(|e| anyhow::anyhow!("{at}: {e}"))?
             }
             _ => anyhow::bail!("{at}: set exactly one of wake_command and wake_url"),
-        }
+        };
+        Ok((canonical, hook))
     }
 
     /// The daemon socket the CLI talks to.

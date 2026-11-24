@@ -1,0 +1,58 @@
+# ~/.gemini/config/mcp_config.json
+{
+  "mcpServers": {
+    "xagent": {
+      "args": [
+        "mcp",
+        "--client",
+        "antigravity"
+      ],
+      "command": "/home/<user>/.local/bin/xagent"
+    }
+  }
+}
+
+# ~/.gemini/config/hooks.json: binds each conversation to its MCP server (follows /clear, /resume, /fork),
+# reminds at start and end of turn, and mirrors native send_message traffic to the `sendmessage` topic.
+{
+  "xagent": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "exec /home/<user>/.local/bin/xagent hook antigravity-sendmessage",
+            "timeout": 10,
+            "type": "command"
+          }
+        ],
+        "matcher": "send_message"
+      }
+    ],
+    "PreInvocation": [
+      {
+        "command": "exec /home/<user>/.local/bin/xagent hook antigravity-bind",
+        "timeout": 10,
+        "type": "command"
+      }
+    ],
+    "SessionStart": [
+      {
+        "command": "exec /home/<user>/.local/bin/xagent hook antigravity-bind",
+        "timeout": 10,
+        "type": "command"
+      }
+    ],
+    "Stop": [
+      {
+        "command": "exec /home/<user>/.local/bin/xagent hook antigravity-stop",
+        "timeout": 10,
+        "type": "command"
+      }
+    ]
+  }
+}
+
+# Optional idle-session alert in ~/.config/xagent/config.toml (e.g. desktop notification via
+# scripts/xagent-notify-antigravity installed to ~/.local/bin/, or an App sidecar webhook):
+[clients.antigravity]
+wake_command = ["/home/<user>/.local/bin/xagent-notify-antigravity"]

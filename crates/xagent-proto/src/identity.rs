@@ -20,13 +20,15 @@ const CLIENT_MAX_CHARS: usize = 32;
 /// The agent client a conversation belongs to: one of the built-in clients, or any other agent
 /// that names itself (`my-agent`) and reaches xagent through the generic launch contract.
 ///
-/// `claude` is accepted as an alias of `claude-code`; both derive the same agent id.
+/// `claude` is accepted as an alias of `claude-code`, and `agy` as an alias of `antigravity`;
+/// aliases derive the same agent id as their canonical client name.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub enum Client {
     ClaudeCode,
     Codex,
     Dsh,
+    Antigravity,
     /// Any other client: a lowercase name, `[a-z][a-z0-9-]*`, at most 32 characters.
     Other(String),
 }
@@ -38,6 +40,7 @@ impl Client {
             Self::ClaudeCode => "claude-code",
             Self::Codex => "codex",
             Self::Dsh => "dsh",
+            Self::Antigravity => "antigravity",
             Self::Other(name) => name,
         }
     }
@@ -59,12 +62,13 @@ impl FromStr for Client {
             "claude-code" | "claude" => Ok(Self::ClaudeCode),
             "codex" => Ok(Self::Codex),
             "dsh" => Ok(Self::Dsh),
+            "antigravity" | "agy" => Ok(Self::Antigravity),
             other if is_client_name(other) => Ok(Self::Other(other.to_owned())),
             other => Err(Error::new(
                 ErrorCode::InvalidArgument,
                 format!(
-                    "invalid client {other:?}: claude-code, codex, dsh, or a lowercase name \
-                     ([a-z][a-z0-9-]*, at most {CLIENT_MAX_CHARS} characters)"
+                    "invalid client {other:?}: claude-code, codex, dsh, antigravity, or a \
+                     lowercase name ([a-z][a-z0-9-]*, at most {CLIENT_MAX_CHARS} characters)"
                 ),
             )),
         }
@@ -201,6 +205,15 @@ mod tests {
         assert_eq!(
             "claude".parse::<Client>().expect("alias").as_str(),
             "claude-code"
+        );
+        assert_eq!(
+            "agy".parse::<Client>().expect("agy alias"),
+            Client::Antigravity
+        );
+        assert_eq!(
+            id("agy", conversation),
+            id("antigravity", conversation),
+            "agy and antigravity derive the same agent id"
         );
         assert_eq!(
             "my-agent".parse::<Client>().expect("generic"),

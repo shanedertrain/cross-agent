@@ -52,6 +52,6 @@ Next steps:
   edit $CONF_DIR/config.toml        [nats] servers, user, password_file, tls_ca; [[projects]]
   systemctl --user daemon-reload && systemctl --user enable --now nats-server xagentd
   $BIN doctor
-  $BIN client-config --client claude|codex|dsh      client setup
-  scripts/install-skills.sh         the cross-agent skill for Claude Code and Codex
+  $BIN client-config --client claude|codex|dsh|antigravity      client setup
+  scripts/install-skills.sh         the cross-agent skill for Claude Code, Codex and Antigravity
 NEXT

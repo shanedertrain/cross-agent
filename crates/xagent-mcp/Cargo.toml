@@ -13,10 +13,14 @@ xagent-proto.workspace = true
 xagent-core.workspace = true
 xagent-wake.workspace = true
 rmcp.workspace = true
+rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

@@ -4,3 +4,4 @@
 *.pem
 *.db
 /dist
+/local

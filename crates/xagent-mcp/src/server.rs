@@ -28,10 +28,11 @@ use serde_json::Value;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 use xagent_core::client::Client as Ipc;
-use xagent_core::protocol::{Call, SessionOpen, SessionUpdate, WindowOpen};
+use xagent_core::protocol::{AntigravityLookup, Call, SessionOpen, SessionUpdate, WindowOpen};
 use xagent_proto::{Client, Conversation, Error, ErrorCode};
 use xagent_wake::{Endpoint, sessions};
 
+use crate::antigravity;
 use crate::codex;
 use crate::hello::Launch;
 
@@ -49,6 +50,15 @@ struct Bound {
     conversation: Conversation,
     /// The display name last written to the registry.
     shown_name: Option<String>,
+    /// Antigravity app data dir reported by lifecycle hooks (overrides the default CLI path).
+    app_data_dir: Option<PathBuf>,
+}
+
+/// Target conversation resolved for a tool call, with optional per-conversation overrides.
+struct ResolvedTarget {
+    conversation: Conversation,
+    cwd: Option<PathBuf>,
+    app_data_dir: Option<PathBuf>,
 }
 
 /// A connection's daemon connection: a window from the start, a session once bound.
@@ -125,6 +135,9 @@ impl Connection {
                     _ => Endpoint::Dsh,
                 },
             ),
+            Launch::Antigravity {
+                pid, conversation, ..
+            } => (conversation.as_deref(), Endpoint::Antigravity { pid: *pid }),
             Launch::Codex { codex_home } => (None, Endpoint::codex(codex_home)),
         };
         let mut ipc = Ipc::connect(&self.ipc_socket).await?;
@@ -147,14 +160,22 @@ impl Connection {
 
     /// The conversation this call acts for when it is not the bound one (or none is bound);
     /// `None` to stay with the bound one.
-    fn wanted_conversation(
+    async fn wanted_conversation(
         &self,
-        bound: Option<&Conversation>,
+        state: &mut State,
         codex_thread: Option<&str>,
-    ) -> Result<Option<Conversation>, Error> {
+    ) -> Result<Option<ResolvedTarget>, Error> {
+        let bound = state.bound.as_ref().map(|b| &b.conversation);
+        let plain = |c: Option<Conversation>| {
+            c.map(|conversation| ResolvedTarget {
+                conversation,
+                cwd: None,
+                app_data_dir: None,
+            })
+        };
         match &*self.launch {
             Launch::Codex { .. } => match (codex_thread, bound) {
-                (Some(thread), bound) => Ok(change(conversation(thread)?, bound)),
+                (Some(thread), bound) => Ok(plain(change(conversation(thread)?, bound))),
                 (None, Some(_)) => Ok(None),
                 (None, None) => Err(not_bound(
                     "Codex did not name its thread (_meta.threadId) in this tool call",
@@ -169,13 +190,13 @@ impl Connection {
                 let live = sessions::find_record(sessions_dir, *pid, session_id.as_deref())
                     .and_then(|r| r.session_id);
                 match (live, bound) {
-                    (Some(id), bound) => Ok(change(conversation(&id)?, bound)),
+                    (Some(id), bound) => Ok(plain(change(conversation(&id)?, bound))),
                     (None, Some(_)) => Ok(None),
                     (None, None) => session_id
                         .as_deref()
                         .map(conversation)
                         .transpose()?
-                        .map(Some)
+                        .map(|c| plain(Some(c)))
                         .ok_or_else(|| {
                             not_bound(
                                 "no Claude Code session found: neither a live session record \
@@ -183,6 +204,14 @@ impl Connection {
                             )
                         }),
                 }
+            }
+            Launch::Antigravity {
+                pid,
+                conversation: fallback,
+                ..
+            } => {
+                self.wanted_antigravity(state, *pid, fallback.as_deref())
+                    .await
             }
             Launch::Env {
                 conversation: c, ..
@@ -192,7 +221,7 @@ impl Connection {
                     .as_deref()
                     .map(conversation)
                     .transpose()?
-                    .map(Some)
+                    .map(|c| plain(Some(c)))
                     .ok_or_else(|| {
                         not_bound(format!(
                             "{} did not set XAGENT_CONVERSATION_ID",
@@ -203,14 +232,99 @@ impl Connection {
         }
     }
 
+    /// Resolves Antigravity's active conversation from the daemon's hook-updated pid table,
+    /// falling back to the launch environment when no hook has registered yet.
+    async fn wanted_antigravity(
+        &self,
+        state: &mut State,
+        pid: Option<u32>,
+        fallback: Option<&str>,
+    ) -> Result<Option<ResolvedTarget>, Error> {
+        let live = if let Some(pid) = pid {
+            if state.ipc.is_none() {
+                state.ipc = Some(self.connect().await?);
+            }
+            let ipc = state.ipc.as_mut().expect("connected above");
+            match ipc
+                .call(Call::AntigravityLookup(AntigravityLookup { pid }))
+                .await
+            {
+                Ok(value) => value.get("conversation").and_then(Value::as_str).map(|id| {
+                    (
+                        id.to_owned(),
+                        value.get("cwd").and_then(Value::as_str).map(PathBuf::from),
+                        value
+                            .get("app_data_dir")
+                            .and_then(Value::as_str)
+                            .map(PathBuf::from),
+                    )
+                }),
+                Err(err) => {
+                    if err.code == ErrorCode::DaemonUnavailable {
+                        state.ipc = None;
+                    }
+                    return Err(err);
+                }
+            }
+        } else {
+            None
+        };
+        match (live, state.bound.as_mut()) {
+            (Some((id, cwd, app_data_dir)), bound) => {
+                let target = conversation(&id)?;
+                if let Some(existing) = bound
+                    && existing.conversation == target
+                {
+                    if app_data_dir.is_some() {
+                        existing.app_data_dir = app_data_dir;
+                    }
+                    return Ok(None);
+                }
+                Ok(Some(ResolvedTarget {
+                    conversation: target,
+                    cwd,
+                    app_data_dir,
+                }))
+            }
+            (None, Some(_)) => Ok(None),
+            (None, None) => fallback
+                .map(conversation)
+                .transpose()?
+                .map(|conversation| {
+                    Some(ResolvedTarget {
+                        conversation,
+                        cwd: None,
+                        app_data_dir: None,
+                    })
+                })
+                .ok_or_else(|| {
+                    not_bound(
+                        "no Antigravity conversation found: configure the xagent hooks \
+                         in ~/.gemini/config/hooks.json (run `xagent client-config \
+                         --client antigravity`), or set XAGENT_CONVERSATION_ID",
+                    )
+                }),
+        }
+    }
+
     /// The name peers should see for the conversation, read fresh from the client's own state.
-    fn display_name(&self, conversation: &Conversation) -> Option<String> {
+    fn display_name(&self, bound: &Bound) -> Option<String> {
+        let conversation = &bound.conversation;
         match &*self.launch {
             Launch::ClaudeCode {
                 sessions_dir, pid, ..
             } => sessions::find_record(sessions_dir, *pid, Some(conversation.as_str()))
                 .and_then(|r| r.display_name().map(str::to_owned)),
             Launch::Codex { codex_home } => codex::thread_name(codex_home, conversation.as_str()),
+            Launch::Antigravity {
+                app_data_dir,
+                title,
+                ..
+            } => {
+                let dir = bound.app_data_dir.as_deref().unwrap_or(app_data_dir);
+                antigravity::conversation_title(dir, conversation.as_str())
+                    .or_else(|| title.clone())
+            }
             Launch::Env { title, .. } => title.clone(),
         }
     }
@@ -218,8 +332,7 @@ impl Connection {
     /// Binds the connection to its conversation (re-binding when the conversation changed), and
     /// brings the registry's display name up to date.
     async fn bind(&self, state: &mut State, codex_thread: Option<&str>) -> Result<(), Error> {
-        let current = state.bound.as_ref().map(|b| &b.conversation);
-        if let Some(target) = self.wanted_conversation(current, codex_thread)? {
+        if let Some(target) = self.wanted_conversation(state, codex_thread).await? {
             if state.bound.take().is_some() {
                 // Closing the daemon connection ends the old session (and its window).
                 state.ipc = None;
@@ -228,11 +341,12 @@ impl Connection {
                 state.ipc = Some(self.connect().await?);
             }
             let ipc = state.ipc.as_mut().expect("connected above");
+            let cwd = target.cwd.unwrap_or_else(|| (*self.cwd).clone());
             let opened = ipc
                 .call(Call::SessionOpen(SessionOpen {
-                    conversation: target.clone(),
+                    conversation: target.conversation.clone(),
                     client: self.client.clone(),
-                    cwd: Some((*self.cwd).clone()),
+                    cwd: Some(cwd),
                 }))
                 .await;
             let who = match opened {
@@ -244,17 +358,18 @@ impl Connection {
                     return Err(err);
                 }
             };
-            info!(client = %self.client, conversation = %target, agent = %who["agent_id"],
+            info!(client = %self.client, conversation = %target.conversation, agent = %who["agent_id"],
                   "mcp connection bound");
             state.bound = Some(Bound {
-                conversation: target,
+                conversation: target.conversation,
                 shown_name: None,
+                app_data_dir: target.app_data_dir,
             });
         }
         let (Some(ipc), Some(bound)) = (state.ipc.as_mut(), state.bound.as_mut()) else {
             return Err(not_bound("no conversation bound"));
         };
-        let name = self.display_name(&bound.conversation);
+        let name = self.display_name(bound);
         if name.is_some() && name != bound.shown_name {
             let update = Call::SessionUpdate(SessionUpdate {
                 display_name: name.clone().unwrap_or_default(),

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.1.0
+
+First-class Antigravity (`agy`) support:
+
+- Built-in `Client::Antigravity` (`antigravity`, alias `agy`) with automatic per-conversation MCP binding via lifecycle hooks (`SessionStart` / `PreInvocation`) keyed by parent `agy` PID (follows `/clear`, `/resume`, and `/fork`) and read-only display-name lookup in `conversation_summaries.db`.
+- Antigravity hooks: `xagent hook antigravity-bind` (binds conversation and injects a `systemMessage` reminder once per unread state), `xagent hook antigravity-stop` (`decision: "continue"` end-of-turn reminder), and `xagent hook antigravity-sendmessage` (mirrors native `send_message` traffic onto the `sendmessage` topic).
+- Optional `[clients.antigravity]` wake command/webhook (bundled `scripts/xagent-notify-antigravity` desktop notification helper using `notify-send`), `xagent client-config --client antigravity`, `xagent doctor` Antigravity hooks check, and `skills/antigravity/cross-agent` (`scripts/install-skills.sh antigravity`).
+
 ## 2.0.0
 
 xagent is rewritten in Rust: one `xagent` binary (daemon, MCP relay, hooks, CLI), a cargo workspace of seven crates, no

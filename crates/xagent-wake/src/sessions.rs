@@ -81,7 +81,7 @@ fn parse_pid(s: &str) -> Option<u32> {
 }
 
 /// The start time of a process in clock ticks since boot (`/proc/<pid>/stat` field 22).
-fn proc_start(pid: u32) -> Option<String> {
+pub fn proc_start(pid: u32) -> Option<String> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     // The command name (field 2) may contain spaces and parentheses; fields resume after the last ')'.
     let rest = &stat[stat.rfind(')')? + 2..];

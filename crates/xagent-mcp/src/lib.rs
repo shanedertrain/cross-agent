@@ -9,6 +9,7 @@
 //! The tools act through the daemon's IPC protocol on its own socket, so MCP and the CLI share
 //! one session API and a session's lifetime is exactly its connection's.
 
+mod antigravity;
 mod codex;
 mod hello;
 mod server;

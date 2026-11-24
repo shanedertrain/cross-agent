@@ -76,6 +76,12 @@ pub enum Endpoint {
         control_socket: PathBuf,
     },
     Dsh,
+    Antigravity {
+        /// The Antigravity (`agy`) process id when known, used to follow conversation switches
+        /// reported by lifecycle hooks.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pid: Option<u32>,
+    },
     /// Any other client, woken by its configured [`Hook`].
     Other {
         name: String,
@@ -104,6 +110,7 @@ impl Endpoint {
             Client::ClaudeCode => Self::claude_code(&home.join(".claude"), None),
             Client::Codex => Self::codex(&home.join(".codex")),
             Client::Dsh => Self::Dsh,
+            Client::Antigravity => Self::Antigravity { pid: None },
             Client::Other(name) => Self::Other { name },
         }
     }
@@ -113,6 +120,7 @@ impl Endpoint {
             Self::ClaudeCode { .. } => Client::ClaudeCode,
             Self::Codex { .. } => Client::Codex,
             Self::Dsh => Client::Dsh,
+            Self::Antigravity { .. } => Client::Antigravity,
             Self::Other { name } => Client::Other(name.clone()),
         }
     }
@@ -211,6 +219,9 @@ impl Inner {
             Endpoint::ClaudeCode { .. } => true,
             Endpoint::Codex { .. } => CodexAppServer::reaches(target),
             Endpoint::Dsh => self.dsh.reaches(target),
+            Endpoint::Antigravity { .. } => {
+                self.config.hooks.contains_key(Client::Antigravity.as_str())
+            }
             Endpoint::Other { name } => self.config.hooks.contains_key(name),
         }
     }
@@ -226,7 +237,7 @@ impl Inner {
                     .await
             }
             Endpoint::Dsh => self.dsh.ready(target).await,
-            Endpoint::Other { .. } => Readiness::Ready,
+            Endpoint::Antigravity { .. } | Endpoint::Other { .. } => Readiness::Ready,
         }
     }
 
@@ -243,6 +254,12 @@ impl Inner {
                     .await
             }
             Endpoint::Dsh => self.dsh.send(target, text).await,
+            Endpoint::Antigravity { .. } => {
+                match self.config.hooks.get(Client::Antigravity.as_str()) {
+                    Some(hook) => hook.send(target, text).await,
+                    None => false,
+                }
+            }
             Endpoint::Other { name } => match self.config.hooks.get(name) {
                 Some(hook) => hook.send(target, text).await,
                 None => false,

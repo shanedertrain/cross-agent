@@ -315,7 +315,7 @@ fn wake_endpoints(
             Endpoint::Codex { control_socket } => {
                 codex.insert(control_socket);
             }
-            Endpoint::Dsh | Endpoint::Other { .. } => {}
+            Endpoint::Dsh | Endpoint::Antigravity { .. } | Endpoint::Other { .. } => {}
         }
     }
     (claude, codex)
@@ -359,6 +359,7 @@ fn wake_checks(config: &Config, status: Option<&Value>, report: &mut Report) {
             format!("no launch log at {}", wake.dsh_web_log.display()),
         );
     }
+    antigravity_check(config.home(), report);
     for (name, hook) in &wake.hooks {
         match hook {
             Hook::Command(argv) => match find_program(&argv[0]) {
@@ -392,6 +393,56 @@ fn find_program(program: &str) -> Option<PathBuf> {
     std::env::split_paths(&std::env::var_os("PATH")?)
         .map(|dir| dir.join(program))
         .find(|p| p.is_file())
+}
+
+/// Checks whether Antigravity's global hooks file (`~/.gemini/config/hooks.json`) wires up xagent.
+fn antigravity_check(home: &Path, report: &mut Report) {
+    let config_dir = home.join(".gemini/config");
+    if !config_dir.exists() {
+        report.add(
+            "antigravity",
+            Verdict::Skip,
+            format!("no Antigravity config at {}", config_dir.display()),
+        );
+        return;
+    }
+    let hooks_path = config_dir.join("hooks.json");
+    let Ok(text) = std::fs::read_to_string(&hooks_path) else {
+        report.add_fix(
+            "antigravity",
+            Verdict::Warn,
+            format!("no hooks file at {}", hooks_path.display()),
+            "run `xagent client-config --client antigravity` and add its hooks to ~/.gemini/config/hooks.json",
+        );
+        return;
+    };
+    let required = [
+        "antigravity-bind",
+        "antigravity-stop",
+        "antigravity-sendmessage",
+    ];
+    let missing: Vec<&str> = required
+        .into_iter()
+        .filter(|name| !text.contains(name))
+        .collect();
+    if missing.is_empty() {
+        report.add(
+            "antigravity",
+            Verdict::Pass,
+            hooks_path.display().to_string(),
+        );
+    } else {
+        report.add_fix(
+            "antigravity",
+            Verdict::Warn,
+            format!(
+                "{} is missing hook(s): {}",
+                hooks_path.display(),
+                missing.join(", ")
+            ),
+            "run `xagent client-config --client antigravity` to update ~/.gemini/config/hooks.json",
+        );
+    }
 }
 
 /// The live sessions of one Claude session registry and whether each inbox is reachable.

@@ -19,7 +19,7 @@ use tempfile::TempDir;
 const REPLY_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// The launch environment the relay forwards; cleared so the test's own session never leaks in.
-const CONTEXT_ENV: [&str; 7] = [
+const CONTEXT_ENV: [&str; 10] = [
     "XAGENT_CONVERSATION_ID",
     "XAGENT_SESSION_TITLE",
     "CLAUDE_CODE_SESSION_ID",
@@ -27,6 +27,9 @@ const CONTEXT_ENV: [&str; 7] = [
     "CLAUDE_PID",
     "CLAUDE_CONFIG_DIR",
     "CODEX_HOME",
+    "ANTIGRAVITY_CONVERSATION_ID",
+    "ANTIGRAVITY_APP_DATA_DIR",
+    "ANTIGRAVITY_PID",
 ];
 
 /// An MCP client driving one `xagent mcp` process over its stdio.
@@ -868,4 +871,231 @@ fn any_client_relays_and_survives_a_daemon_restart() {
     });
     assert_eq!(after["agent_id"], before["agent_id"], "{after}");
     dsh.close();
+}
+
+fn setup_antigravity_db(app_data: &Path, rows: &[(&str, &str)]) {
+    std::fs::create_dir_all(app_data).expect("app data dir");
+    let conn = rusqlite::Connection::open(app_data.join("conversation_summaries.db")).expect("db");
+    conn.execute(
+        "CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '')",
+        [],
+    )
+    .expect("schema");
+    for &(id, title) in rows {
+        conn.execute(
+            "INSERT INTO conversation_summaries (conversation_id, title) VALUES (?1, ?2)",
+            [id, title],
+        )
+        .expect("insert title");
+    }
+}
+
+fn run_antigravity_hook(host: &Host, host_pid: &str, name: &str, event: &Value) -> Value {
+    let mut child = host
+        .command()
+        .env("ANTIGRAVITY_PID", host_pid)
+        .args(["hook", name])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("hook runs");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(event.to_string().as_bytes())
+        .expect("write stdin");
+    let out = child.wait_with_output().expect("hook exits");
+    assert_eq!(out.status.code(), Some(0), "hook never fails client");
+    let text = String::from_utf8_lossy(&out.stdout);
+    serde_json::from_str(text.trim()).unwrap_or_else(|e| panic!("{name} stdout {text:?}: {e}"))
+}
+
+fn assert_antigravity_reminders(host: &Host, host_pid: &str, app_data: &Path, agent_id: &str) {
+    let stop = |reason: &str| {
+        run_antigravity_hook(
+            host,
+            host_pid,
+            "antigravity-stop",
+            &json!({
+                "conversationId": "agy-conv-1",
+                "continuationActive": false,
+                "terminationReason": reason,
+            }),
+        )
+    };
+    assert_eq!(stop("USER_CANCELED"), json!({}));
+    let stop_reply = stop("NO_TOOL_CALL");
+    assert_eq!(stop_reply["decision"], "continue", "{stop_reply}");
+    assert!(
+        stop_reply["reason"]
+            .as_str()
+            .is_some_and(|r| r.contains(&format!("1 unread message for conversations/{agent_id}"))),
+        "{stop_reply}"
+    );
+    assert_eq!(stop("NO_TOOL_CALL"), json!({}), "same state not repeated");
+
+    host.as_conv(
+        "conv-peer",
+        "dm",
+        &["--to", agent_id, "--summary", "second"],
+    )
+    .expect("dm 2");
+    let pre_reply = wait_for(
+        Duration::from_secs(10),
+        "PreInvocation injects unread",
+        || {
+            let reply = run_antigravity_hook(
+                host,
+                host_pid,
+                "antigravity-bind",
+                &json!({
+                    "conversationId": "agy-conv-1",
+                    "cwd": app_data.parent().expect("parent"),
+                    "artifactDirectoryPath": app_data.join("brain/agy-conv-1"),
+                    "hookEventName": "PreInvocation",
+                }),
+            );
+            reply["injectSteps"][0]["systemMessage"]["systemMessage"]
+                .as_str()
+                .is_some_and(|s| s.contains("2 unread messages"))
+                .then_some(reply)
+        },
+    );
+    assert!(pre_reply["injectSteps"].is_array(), "{pre_reply}");
+}
+
+fn assert_antigravity_sendmessage_mirror(host: &Host, host_pid: &str, agent_id: &str) {
+    let mirror_reply = run_antigravity_hook(
+        host,
+        host_pid,
+        "antigravity-sendmessage",
+        &json!({
+            "conversationId": "agy-conv-1",
+            "toolCall": {
+                "id": "call_1",
+                "name": "send_message",
+                "args": { "Recipient": "subagent-42", "Message": "check the build\nand report" },
+            },
+        }),
+    );
+    assert_eq!(mirror_reply, json!({}));
+    let history = host
+        .run(&[
+            "topic",
+            "history",
+            "--conversation",
+            "reader",
+            "--client",
+            "codex",
+            "sendmessage",
+            "--body",
+        ])
+        .expect("topic history");
+    let mirrored = &history["messages"][0];
+    assert_eq!(
+        mirrored["summary"], "SendMessage -> subagent-42: check the build",
+        "{history}"
+    );
+    assert_eq!(mirrored["body"], "check the build\nand report");
+    assert_eq!(mirrored["sender"], agent_id);
+}
+
+/// Antigravity binds through its `SessionStart` / `PreInvocation` hooks (keyed by parent pid),
+/// reads display names from `conversation_summaries.db`, follows `/clear` re-binding, reminds via
+/// `Stop` (`decision: "continue"`) and `PreInvocation` (`injectSteps`), mirrors native
+/// `send_message` calls onto the `sendmessage` topic, and delivers idle wakes via
+/// `[clients.antigravity]`.
+#[test]
+fn antigravity_hooks_bind_rebind_remind_mirror_and_wake() {
+    let nats = Nats::start();
+    let files = TempDir::new().expect("temp dir");
+    let wake_out = files.path().join("agy-wake.json");
+    let app_data = files.path().join("antigravity-cli");
+    setup_antigravity_db(
+        &app_data,
+        &[
+            ("agy-conv-1", "Antigravity Alpha"),
+            ("agy-conv-2", "Antigravity Beta"),
+        ],
+    );
+
+    let host = Host::start_with(
+        &nats,
+        "host-a",
+        &format!(
+            "[notify]\nwake_min_interval_seconds = 0\n\
+             [clients.antigravity]\nwake_command = [\"sh\", \"-c\", \"cat > {}\"]\n",
+            wake_out.display()
+        ),
+    );
+    let mut fake_agy = Command::new("sleep")
+        .arg("600")
+        .spawn()
+        .expect("fake agy process");
+    let host_pid = fake_agy.id().to_string();
+
+    let mut agy = Mcp::launch(&host, "antigravity", &[("ANTIGRAVITY_PID", &host_pid)]);
+    let err = agy
+        .tool("whoami", json!({}), None)
+        .expect_err("unbound before hook");
+    assert_eq!(err["code"], "not_bound", "{err}");
+
+    let bind = |conv: &str| {
+        run_antigravity_hook(
+            &host,
+            &host_pid,
+            "antigravity-bind",
+            &json!({
+                "conversationId": conv,
+                "cwd": files.path(),
+                "artifactDirectoryPath": app_data.join("brain").join(conv),
+                "hookEventName": "SessionStart",
+            }),
+        )
+    };
+    assert_eq!(bind("agy-conv-1"), json!({}));
+
+    let who = agy.call("whoami", json!({}));
+    assert_eq!(who["client"], "antigravity", "{who}");
+    assert_eq!(who["conversation"], "agy-conv-1", "{who}");
+    assert_eq!(who["display_name"], "Antigravity Alpha", "{who}");
+    let agent_id = who["agent_id"].as_str().expect("agent_id").to_owned();
+
+    host.as_conv(
+        "conv-peer",
+        "dm",
+        &["--to", &agent_id, "--summary", "SECRET"],
+    )
+    .expect("dm sent");
+    wait_for(Duration::from_secs(10), "DM reaches Antigravity", || {
+        (agy.call("inbox_status", json!({}))["unread_total"] == 1).then_some(())
+    });
+    let wake: Value = wait_for(Duration::from_secs(10), "Antigravity wake hook", || {
+        serde_json::from_str(&std::fs::read_to_string(&wake_out).ok()?).ok()
+    });
+    assert_eq!(wake["client"], "antigravity", "{wake}");
+    assert_eq!(wake["conversation"], "agy-conv-1", "{wake}");
+    assert_eq!(wake["agent_id"], agent_id.as_str(), "{wake}");
+    assert!(
+        !wake.to_string().contains("SECRET"),
+        "peer text never leaks to wake"
+    );
+
+    assert_antigravity_reminders(&host, &host_pid, &app_data, &agent_id);
+    assert_antigravity_sendmessage_mirror(&host, &host_pid, &agent_id);
+
+    assert_eq!(bind("agy-conv-2"), json!({}));
+    let after_clear = agy.call("whoami", json!({}));
+    assert_eq!(after_clear["conversation"], "agy-conv-2", "{after_clear}");
+    assert_ne!(after_clear["agent_id"], agent_id.as_str());
+    assert_eq!(
+        after_clear["display_name"], "Antigravity Beta",
+        "{after_clear}"
+    );
+
+    agy.close();
+    let _ = fake_agy.kill();
+    let _ = fake_agy.wait();
 }

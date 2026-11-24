@@ -198,6 +198,8 @@ impl Connection {
             Call::DmSend(params) => daemon.dm_send(self.bound(), params).await,
             Call::StopCheck(params) => daemon.stop_check(&params),
             Call::SendmessageMirror(params) => Box::pin(daemon.sendmessage_mirror(params)).await,
+            Call::AntigravityBind(params) => daemon.antigravity_bind(params),
+            Call::AntigravityLookup(params) => Ok(daemon.antigravity_lookup(&params)),
             Call::SessionUpdate(params) => daemon.session_update(self.bound(), params).await,
             Call::AgentList(params) => daemon.agent_list(self.bound(), params).await,
             Call::TopicCreate(params) => daemon.topic_create(self.bound(), params).await,

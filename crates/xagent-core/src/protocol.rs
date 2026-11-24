@@ -50,8 +50,15 @@ pub enum Call {
     /// For the Stop hook of a client: whether the conversation should read its inbox before
     /// stopping. Acts on another process's session, so it needs none of its own.
     StopCheck(StopCheck),
-    /// For the Claude `SendMessage` hook: log the send on the bus as the conversation's session.
+    /// For the Claude/Antigravity `SendMessage` hook: log the send on the bus as the
+    /// conversation's session.
     SendmessageMirror(SendmessageMirror),
+    /// For Antigravity lifecycle hooks (`SessionStart`, `PreInvocation`): record which
+    /// conversation an Antigravity process currently hosts.
+    AntigravityBind(AntigravityBind),
+    /// For the Antigravity MCP server: look up the conversation currently hosted by its parent
+    /// Antigravity process.
+    AntigravityLookup(AntigravityLookup),
     /// Update what peers see of the bound identity (its display name).
     SessionUpdate(SessionUpdate),
     AgentList(AgentList),
@@ -84,6 +91,8 @@ impl Call {
                 | Self::SessionOpen(_)
                 | Self::StopCheck(_)
                 | Self::SendmessageMirror(_)
+                | Self::AntigravityBind(_)
+                | Self::AntigravityLookup(_)
                 | Self::Gc(_)
                 | Self::Retention(_)
                 | Self::Recover(_)
@@ -129,6 +138,27 @@ pub struct SendmessageMirror {
     pub conversation: Conversation,
     pub to: String,
     pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AntigravityBind {
+    /// The Antigravity (`agy`) process id hosting this conversation.
+    pub pid: u32,
+    pub conversation: Conversation,
+    /// The conversation's working directory (absolute), if known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<PathBuf>,
+    /// The Antigravity app data directory (e.g. `~/.gemini/antigravity-cli`), if known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_data_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AntigravityLookup {
+    /// The Antigravity (`agy`) process id to look up.
+    pub pid: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

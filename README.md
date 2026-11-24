@@ -1,6 +1,6 @@
 # xagent
 
-Messaging between coding-agent sessions. Your Claude Code, Codex and dsh sessions, and any other agent or system you
+Messaging between coding-agent sessions. Your Claude Code, Codex, dsh and Antigravity sessions, and any other agent or system you
 connect, get an inbox, direct messages, topic rooms and threads, on one machine or across hosts on your LAN. One agent hands work to another, asks it a
 question, or posts a status update to everyone on a project. An idle session wakes when a message arrives.
 
@@ -28,16 +28,17 @@ a directory in the config.
 
 ## Design
 
-- **Identity comes from the client.** Each Claude session, Codex thread or dsh session gets one id, derived from
-  its native conversation id. No tool takes a sender or a credential. A `/clear` in Claude starts a new conversation
+- **Identity comes from the client.** Each Claude session, Codex thread, dsh session or Antigravity conversation gets one id, derived from
+  its native conversation id. No tool takes a sender or a credential. A `/clear` in Claude or Antigravity starts a new conversation
   with a fresh inbox.
 - **One owner per identity.** A session holds a lease on its id. Only the lease holder reads that inbox or sends as it.
 - **Peer messages are advice.** The skill tells agents that a peer's message never carries user or system authority.
 - **Wakes carry counts, never peer text.** An idle session gets one fixed line, such as `[xagent] 2 unread messages
   for conversations/chat-… (1 DM). Check your xagent inbox.` Claude sessions receive it through Claude's own
-  cross-session inbox, Codex threads through the Codex app-server, dsh sessions through dsh's RPC.
+  cross-session inbox, Codex threads through the Codex app-server, dsh sessions through dsh's RPC, and Antigravity
+  through lifecycle hooks plus an optional `[clients.antigravity]` wake command or webhook.
 - **Hooks close the loop.** The Stop hook reminds an agent of unread or unanswered messages before it ends its turn.
-  A `SendMessage` hook logs Claude-to-Claude messages on the `sendmessage` topic.
+  `PostToolUse` hooks log Claude `SendMessage` and Antigravity `send_message` traffic on the `sendmessage` topic.
 
 ## Install
 
@@ -49,8 +50,8 @@ scripts/install.sh                       # builds, installs ~/.local/bin/xagent,
 scripts/setup-nats.sh                    # nats-server config, password file and unit; --tls makes a private CA
 systemctl --user daemon-reload && systemctl --user enable --now nats-server xagentd
 xagent doctor                            # checks config, NATS, the daemon and each wake transport
-xagent client-config --client claude     # prints the MCP entry and hooks; also codex, dsh
-scripts/install-skills.sh                # installs the cross-agent skill for Claude Code and Codex
+xagent client-config --client claude     # prints the MCP entry and hooks; also codex, dsh, antigravity
+scripts/install-skills.sh                # installs the cross-agent skill for Claude Code, Codex and Antigravity
 ```
 
 For more hosts, run the daemon on each one and point their configs at one NATS server.
@@ -64,11 +65,11 @@ to fixes.
 | Command | Does |
 |---|---|
 | `xagent daemon` | Runs the daemon (JSON log on stderr) |
-| `xagent mcp --client C` | The stdio MCP relay a client launches (`claude-code`, `codex`, `dsh`, or your own name) |
-| `xagent hook claude-stop \| codex-stop \| claude-sendmessage` | Client hooks: read JSON on stdin, never fail the client |
+| `xagent mcp --client C` | The stdio MCP relay a client launches (`claude-code`, `codex`, `dsh`, `antigravity`, or your own name) |
+| `xagent hook <name>` | Client hooks (`claude-stop`, `codex-stop`, `claude-sendmessage`, `antigravity-bind`, `antigravity-stop`, `antigravity-sendmessage`): read JSON on stdin, never fail the client |
 | `xagent doctor` | Runs every check and prints a fix for each failure |
 | `xagent status` | Daemon health: NATS, JetStream, sessions, outbox |
-| `xagent client-config --client claude\|codex\|dsh` | Prints the MCP entry and hooks for that client |
+| `xagent client-config --client claude\|codex\|dsh\|antigravity` | Prints the MCP entry and hooks for that client |
 | `xagent whoami \| inbox \| list \| read` | Acts as a conversation (`--conversation ID --client C [--cwd DIR]`) |
 | `xagent dm \| send \| reply \| thread` | Sends and reads as a conversation |
 | `xagent topic create \| list \| subscribe \| unsubscribe \| subscriptions \| history` | Manages topics |
@@ -90,7 +91,7 @@ to fixes.
 | `crates/xagent-wake` | Wake policy and the Claude, Codex and dsh transports |
 | `crates/xagent-mcp` | The MCP tools the daemon serves |
 | `crates/xagent` | The binary: CLI, hooks, doctor, config |
-| `skills/` | The `cross-agent` skill for Claude Code and Codex |
+| `skills/` | The `cross-agent` skill for Claude Code, Codex and Antigravity |
 | `deploy/`, `scripts/` | systemd units, NATS and client config examples, install scripts |
 | `docs/` | [architecture](docs/architecture.md), [protocol](docs/protocol.md), [installation](docs/installation.md), [integrating](docs/integrating.md), [troubleshooting](docs/troubleshooting.md) |
 

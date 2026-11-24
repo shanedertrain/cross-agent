@@ -2781,11 +2781,12 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
 name = "xagent"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "anyhow",
  "clap",
  "gethostname",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
@@ -2803,7 +2804,7 @@ dependencies = [
 
 [[package]]
 name = "xagent-bus"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "async-nats",
  "bytes",
@@ -2819,7 +2820,7 @@ dependencies = [
 
 [[package]]
 name = "xagent-core"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2835,11 +2836,13 @@ dependencies = [
 
 [[package]]
 name = "xagent-mcp"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "rmcp",
+ "rusqlite",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "xagent-core",
@@ -2849,7 +2852,7 @@ dependencies = [
 
 [[package]]
 name = "xagent-proto"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "jiff",
  "serde",
@@ -2862,7 +2865,7 @@ dependencies = [
 
 [[package]]
 name = "xagent-store"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "rusqlite",
  "thiserror",
@@ -2871,7 +2874,7 @@ dependencies = [
 
 [[package]]
 name = "xagent-wake"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "futures-util",
  "reqwest",

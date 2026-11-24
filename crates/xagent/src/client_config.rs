@@ -19,6 +19,33 @@ fn codex_hooks(exe: &str) -> Value {
     ] }] } })
 }
 
+/// `~/.gemini/config/hooks.json`: conversation binding, start/end-of-turn reminders, and
+/// `send_message` mirroring. `exec` replaces `sh -c` so the hook shares the `agy` parent pid
+/// with `xagent mcp --client antigravity`.
+fn antigravity_hooks(exe: &str) -> Value {
+    json!({
+        "xagent": {
+            "SessionStart": [
+                { "type": "command", "command": format!("exec {exe} hook antigravity-bind"), "timeout": 10 }
+            ],
+            "PreInvocation": [
+                { "type": "command", "command": format!("exec {exe} hook antigravity-bind"), "timeout": 10 }
+            ],
+            "PostToolUse": [
+                {
+                    "matcher": "send_message",
+                    "hooks": [
+                        { "type": "command", "command": format!("exec {exe} hook antigravity-sendmessage"), "timeout": 10 }
+                    ]
+                }
+            ],
+            "Stop": [
+                { "type": "command", "command": format!("exec {exe} hook antigravity-stop"), "timeout": 10 }
+            ]
+        }
+    })
+}
+
 fn pretty(value: &Value) -> String {
     serde_json::to_string_pretty(value).expect("JSON values serialize")
 }
@@ -54,6 +81,17 @@ pub fn render(client: &Client, exe: &str) -> String {
                 { "type": "command", "command": format!("{exe} hook claude-stop"), "timeout": 10 }
             ] }] } })),
         ),
+        Client::Antigravity => format!(
+            "# ~/.gemini/config/mcp_config.json\n{}\n\n\
+             # ~/.gemini/config/hooks.json: binds each conversation to its MCP server (follows /clear, /resume, /fork),\n\
+             # reminds at start and end of turn, and mirrors native send_message traffic to the `sendmessage` topic.\n{}\n\n\
+             # Optional idle-session alert in ~/.config/xagent/config.toml (e.g. desktop notification or App sidecar webhook):\n\
+             [clients.antigravity]\n\
+             wake_command = [\"/home/<user>/.local/bin/xagent-notify-antigravity\"]",
+            pretty(&json!({ "mcpServers": { "xagent": {
+                "command": exe, "args": ["mcp", "--client", "antigravity"] } } })),
+            pretty(&antigravity_hooks(exe)),
+        ),
         Client::Other(name) => format!(
             "# Launch the MCP server once per conversation, over stdio, with the conversation named:\n\
              command: {exe}\nargs: ['mcp', '--client', '{name}']\nenv:\n\
@@ -85,5 +123,10 @@ mod tests {
                 .to_string()
                 .contains("hook codex-stop")
         );
+        let agy = antigravity_hooks("/bin/xagent").to_string();
+        assert!(agy.contains("exec /bin/xagent hook antigravity-bind"));
+        assert!(agy.contains("exec /bin/xagent hook antigravity-stop"));
+        assert!(agy.contains("exec /bin/xagent hook antigravity-sendmessage"));
+        assert!(agy.contains("\"matcher\":\"send_message\""));
     }
 }

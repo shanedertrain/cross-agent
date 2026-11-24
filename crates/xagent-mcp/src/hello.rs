@@ -19,7 +19,7 @@ pub const MAX_HELLO_BYTES: usize = 64 * 1024;
 
 /// The environment variables the relay forwards: only what names the conversation and where the
 /// client keeps its state. Never credentials.
-pub const CONTEXT_ENV: [&str; 7] = [
+pub const CONTEXT_ENV: [&str; 10] = [
     "XAGENT_CONVERSATION_ID",
     "XAGENT_SESSION_TITLE",
     "CLAUDE_CODE_SESSION_ID",
@@ -27,6 +27,9 @@ pub const CONTEXT_ENV: [&str; 7] = [
     "CLAUDE_PID",
     "CLAUDE_CONFIG_DIR",
     "CODEX_HOME",
+    "ANTIGRAVITY_CONVERSATION_ID",
+    "ANTIGRAVITY_APP_DATA_DIR",
+    "ANTIGRAVITY_PID",
 ];
 
 /// The relay's launch context.
@@ -44,10 +47,16 @@ pub struct Hello {
 impl Hello {
     /// The context of the current process.
     pub fn from_process(client: Client) -> std::io::Result<Self> {
-        let env = CONTEXT_ENV
+        let mut env: BTreeMap<String, String> = CONTEXT_ENV
             .iter()
             .filter_map(|&key| Some((key.to_owned(), std::env::var(key).ok()?)))
             .collect();
+        if client == Client::Antigravity && !env.contains_key("ANTIGRAVITY_PID") {
+            let ppid = std::os::unix::process::parent_id();
+            if ppid > 1 {
+                env.insert("ANTIGRAVITY_PID".to_owned(), ppid.to_string());
+            }
+        }
         Ok(Self {
             client,
             cwd: std::env::current_dir()?,
@@ -83,6 +92,15 @@ pub(crate) enum Launch {
     },
     /// `_meta.threadId` of each tool call; names from the Codex session index.
     Codex { codex_home: PathBuf },
+    /// Antigravity (`agy`): conversation reported to the daemon by lifecycle hooks keyed on the
+    /// parent Antigravity pid (follows `/clear`, `/resume`, `/fork`), with
+    /// `XAGENT_CONVERSATION_ID` / `ANTIGRAVITY_CONVERSATION_ID` as fallback.
+    Antigravity {
+        app_data_dir: PathBuf,
+        pid: Option<u32>,
+        conversation: Option<String>,
+        title: Option<String>,
+    },
     /// dsh, and any other client: one server per conversation, named in the environment
     /// (`XAGENT_CONVERSATION_ID`, `XAGENT_SESSION_TITLE`).
     Env {
@@ -113,6 +131,25 @@ impl Launch {
                     .var("CODEX_HOME")
                     .map_or_else(|| home.join(".codex"), PathBuf::from),
             },
+            Client::Antigravity => {
+                let app_data_dir = hello
+                    .var("ANTIGRAVITY_APP_DATA_DIR")
+                    .map_or_else(|| home.join(".gemini/antigravity-cli"), PathBuf::from);
+                let pid = hello
+                    .var("ANTIGRAVITY_PID")
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .filter(|&p| p > 0);
+                let conversation = hello
+                    .var("XAGENT_CONVERSATION_ID")
+                    .or_else(|| hello.var("ANTIGRAVITY_CONVERSATION_ID"))
+                    .map(str::to_owned);
+                Self::Antigravity {
+                    app_data_dir,
+                    pid,
+                    conversation,
+                    title: hello.var("XAGENT_SESSION_TITLE").map(str::to_owned),
+                }
+            }
             Client::Dsh | Client::Other(_) => Self::Env {
                 conversation: hello.var("XAGENT_CONVERSATION_ID").map(str::to_owned),
                 title: hello.var("XAGENT_SESSION_TITLE").map(str::to_owned),

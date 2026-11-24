@@ -116,10 +116,10 @@ relay   {"client":"claude-code","cwd":"/home/u/p","env":{"CLAUDE_PID":"4242","CL
 daemon  {"ok":true}     or     {"ok":false,"error":{"code":"...","message":"..."}}
 ```
 
-`client` is `claude-code` (alias `claude`), `codex`, `dsh`, or any other client name (`[a-z][a-z0-9-]*`, at most 32
+`client` is `claude-code` (alias `claude`), `codex`, `dsh`, `antigravity` (alias `agy`), or any other client name (`[a-z][a-z0-9-]*`, at most 32
 characters), which names its conversation in `XAGENT_CONVERSATION_ID` as dsh does. `env` carries only the variables that are set among
 `XAGENT_CONVERSATION_ID`, `XAGENT_SESSION_TITLE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_MESSAGING_SOCKET`, `CLAUDE_PID`,
-`CLAUDE_CONFIG_DIR`, `CODEX_HOME`. The hello is at most 64 KiB; after the answer the connection is MCP.
+`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `ANTIGRAVITY_CONVERSATION_ID`, `ANTIGRAVITY_APP_DATA_DIR`, `ANTIGRAVITY_PID`. The hello is at most 64 KiB; after the answer the connection is MCP.
 
 When the daemon closes the connection, the relay answers each unanswered request with JSON-RPC error `-32000`,
 reconnects, sends the hello again, and replays the client's `initialize` request (dropping the daemon's answer) and
@@ -140,10 +140,11 @@ session. Methods follow the MCP tool names (`whoami`, `inbox_status`, `message_s
 | Method | Needs a session | Use |
 |---|---|---|
 | `ping`, `status` | no | Liveness; daemon health (`xagent status`) |
-| `window_open` | no | An MCP connection declares itself, for the unbound-window wake: `cwd`, `conversation` (if the launch names one) and `endpoint`, where the client is woken: `{"client":"claude-code","sessions_dir":"...","pid":4242}`, `{"client":"codex","control_socket":"..."}`, `{"client":"dsh"}` or `{"client":"other","name":"my-agent"}`, resolved from the hello's `CLAUDE_CONFIG_DIR` / `CODEX_HOME`. A session the connection opens is woken at the same endpoint; one opened without a window, at the client's default (`~/.claude`, `~/.codex`) |
+| `window_open` | no | An MCP connection declares itself, for the unbound-window wake: `cwd`, `conversation` (if the launch names one) and `endpoint`, where the client is woken: `{"client":"claude-code","sessions_dir":"...","pid":4242}`, `{"client":"codex","control_socket":"..."}`, `{"client":"dsh"}`, `{"client":"antigravity","pid":4242}` or `{"client":"other","name":"my-agent"}`, resolved from the hello's `CLAUDE_CONFIG_DIR` / `CODEX_HOME` / `ANTIGRAVITY_PID`. A session the connection opens is woken at the same endpoint; one opened without a window, at the client's default (`~/.claude`, `~/.codex`) |
 | `session_open`, `session_update` | no / yes | Bind a conversation; update its display name |
-| `stop_check` | no | Stop hooks: should this conversation read its inbox before stopping |
-| `sendmessage_mirror` | no | The `SendMessage` hook: log a send on the `sendmessage` topic |
+| `stop_check` | no | Stop and Antigravity `PreInvocation` hooks: should this conversation read its inbox |
+| `sendmessage_mirror` | no | The Claude `SendMessage` / Antigravity `send_message` hook: log a send on the `sendmessage` topic |
+| `antigravity_bind`, `antigravity_lookup` | no | Register or query the live conversation hosted by an Antigravity process pid (updated by `antigravity-bind` hooks) |
 | `gc`, `retention`, `recover` | no | Local retention pass; show or set the stream's retention and size cap; rebuild inboxes from JetStream |
 
 ## Wake hook payload `xagent.wake.v1`

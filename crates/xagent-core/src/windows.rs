@@ -17,12 +17,13 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, MutexGuard};
 use std::time::Duration;
 
+use serde_json::{Value, json};
 use tracing::debug;
 use xagent_proto::{AgentId, Conversation, Error, ErrorCode, WORKSPACE, conversation_agent_id};
 use xagent_wake::{CodexAppServer, Endpoint, Target, sessions};
 
 use crate::daemon::Daemon;
-use crate::protocol::WindowOpen;
+use crate::protocol::{AntigravityBind, AntigravityLookup, WindowOpen};
 
 /// How often unbound windows are peeked at (and at once when a window opens).
 const PEEK_INTERVAL: Duration = Duration::from_secs(15);
@@ -31,12 +32,32 @@ const PEEK_INTERVAL: Duration = Duration::from_secs(15);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct WindowId(u64);
 
+/// The active conversation an Antigravity process reported through its lifecycle hooks.
+#[derive(Debug, Clone)]
+struct AntigravityBinding {
+    conversation: Conversation,
+    cwd: Option<PathBuf>,
+    app_data_dir: Option<PathBuf>,
+    /// Start time of the `agy` process in `/proc/<pid>/stat` ticks, to ignore reused pids.
+    proc_start: Option<String>,
+}
+
+impl AntigravityBinding {
+    fn alive(&self, pid: u32) -> bool {
+        self.proc_start
+            .as_ref()
+            .is_none_or(|recorded| sessions::proc_start(pid).as_ref() == Some(recorded))
+    }
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct Windows {
     next_id: u64,
     open: HashMap<WindowId, WindowOpen>,
     /// Messages waiting per identity of an unbound window, at the last peek.
     peeked: HashMap<AgentId, u64>,
+    /// Active conversation per Antigravity process id, updated by `antigravity-bind` hooks.
+    antigravity: HashMap<u32, AntigravityBinding>,
 }
 
 fn real(path: &Path) -> PathBuf {
@@ -86,6 +107,75 @@ impl Daemon {
         Some(self.windows().open.get(&id)?.endpoint.clone())
     }
 
+    /// Records the conversation currently hosted by an Antigravity process (`antigravity-bind`).
+    pub(crate) fn antigravity_bind(&self, params: AntigravityBind) -> Result<Value, Error> {
+        if params.pid == 0 {
+            return Err(Error::new(
+                ErrorCode::InvalidArgument,
+                "pid must be a positive process id",
+            ));
+        }
+        if params.cwd.as_ref().is_some_and(|p| !p.is_absolute()) {
+            return Err(Error::new(
+                ErrorCode::InvalidArgument,
+                "cwd must be an absolute path",
+            ));
+        }
+        if params
+            .app_data_dir
+            .as_ref()
+            .is_some_and(|p| !p.is_absolute())
+        {
+            return Err(Error::new(
+                ErrorCode::InvalidArgument,
+                "app_data_dir must be an absolute path",
+            ));
+        }
+        let binding = AntigravityBinding {
+            conversation: params.conversation,
+            cwd: params.cwd,
+            app_data_dir: params.app_data_dir,
+            proc_start: sessions::proc_start(params.pid),
+        };
+        {
+            let mut windows = self.windows();
+            windows.antigravity.insert(params.pid, binding);
+            if windows.antigravity.len() > 32 {
+                windows.antigravity.retain(|&pid, entry| entry.alive(pid));
+            }
+        }
+        self.peek_kick.notify_one();
+        Ok(json!({ "ok": true }))
+    }
+
+    /// Looks up the active conversation bound to an Antigravity process id.
+    pub(crate) fn antigravity_lookup(&self, params: &AntigravityLookup) -> Value {
+        let binding = self.live_antigravity(params.pid);
+        let mut out = json!({
+            "conversation": binding.as_ref().map(|b| b.conversation.as_str()),
+        });
+        if let Some(binding) = binding {
+            if let Some(cwd) = binding.cwd {
+                out["cwd"] = json!(cwd);
+            }
+            if let Some(dir) = binding.app_data_dir {
+                out["app_data_dir"] = json!(dir);
+            }
+        }
+        out
+    }
+
+    fn live_antigravity(&self, pid: u32) -> Option<AntigravityBinding> {
+        let mut windows = self.windows();
+        let binding = windows.antigravity.get(&pid)?.clone();
+        if binding.alive(pid) {
+            Some(binding)
+        } else {
+            windows.antigravity.remove(&pid);
+            None
+        }
+    }
+
     /// Messages waiting for `agent`, the identity of an unbound window, at the last peek.
     pub(crate) fn waiting(&self, agent: &str) -> Option<u64> {
         let agent: AgentId = agent.parse().ok()?;
@@ -123,6 +213,9 @@ impl Daemon {
             let conversation = match &window.endpoint {
                 Endpoint::Codex { .. } => continue,
                 Endpoint::Dsh | Endpoint::Other { .. } => window.conversation.clone(),
+                Endpoint::Antigravity { pid } => pid
+                    .and_then(|pid| self.live_antigravity(pid).map(|b| b.conversation))
+                    .or_else(|| window.conversation.clone()),
                 Endpoint::ClaudeCode { sessions_dir, pid } => sessions::find_record(
                     sessions_dir,
                     *pid,

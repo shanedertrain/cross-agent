@@ -105,14 +105,18 @@ impl Daemon {
         }))
     }
 
-    /// For the `SendMessage` hook: the send is logged on the bus by the conversation's own session
-    /// (the hook's process cannot: the daemon holds the lease), to the `sendmessage` topic, created
-    /// on first use. Nobody subscribes to it by default; `topic_history` reads it.
+    /// For the `SendMessage` / `send_message` hook: the send is logged on the bus by the
+    /// conversation's own session (the hook's process cannot: the daemon holds the lease), to the
+    /// `sendmessage` topic, created on first use. Nobody subscribes to it by default;
+    /// `topic_history` reads it.
     pub(crate) async fn sendmessage_mirror(
         &self,
         params: SendmessageMirror,
     ) -> Result<Value, Error> {
-        let Some(session) = self.session_of(&params.conversation, &[Client::ClaudeCode]) else {
+        let Some(session) = self.session_of(
+            &params.conversation,
+            &[Client::ClaudeCode, Client::Antigravity],
+        ) else {
             return Ok(
                 json!({ "mirrored": false, "reason": "conversation has no bound xagent session" }),
             );
@@ -121,7 +125,8 @@ impl Daemon {
         let record = TopicRecord {
             workspace: WORKSPACE.to_owned(),
             name: MIRROR_TOPIC.to_owned(),
-            description: "Claude Code SendMessage traffic, mirrored by the PostToolUse hook"
+            description: "Claude Code and Antigravity native SendMessage traffic, mirrored by \
+                          PostToolUse hooks"
                 .to_owned(),
             created_by: session.agent.to_string(),
             created_at: now_ts(),

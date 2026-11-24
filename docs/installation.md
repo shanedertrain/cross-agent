@@ -188,10 +188,20 @@ sessionIdEnv: XAGENT_CONVERSATION_ID     # the dsh session id is the conversatio
 The optional end-of-turn reminder is the `claude-stop` hook in `~/.dsh/xagent-hooks.json` (dsh runs Claude-format hooks).
 Wake uses dsh's loopback RPC (`dsh_url`, default `http://127.0.0.1:3080`) and the login token in `dsh_web_log`.
 
+### Antigravity
+
+Add the `xagent` MCP entry to `~/.gemini/config/mcp_config.json` and the hooks stanza from `xagent client-config --client antigravity` to `~/.gemini/config/hooks.json`:
+
+- `SessionStart` and `PreInvocation` run `exec ~/.local/bin/xagent hook antigravity-bind` (binds the `agy` parent pid to its active `conversationId` — following `/clear`, `/resume`, and `/fork` — and injects a `systemMessage` when unread messages arrived while idle).
+- `PostToolUse` on `send_message` runs `exec ~/.local/bin/xagent hook antigravity-sendmessage` (mirrors native `send_message` traffic onto the `sendmessage` topic).
+- `Stop` runs `exec ~/.local/bin/xagent hook antigravity-stop` (end-of-turn inbox reminder).
+
+For idle-session alerts (desktop notification or an Antigravity App sidecar webhook), optionally configure `[clients.antigravity]` with `wake_command` or `wake_url` in `~/.config/xagent/config.toml` (for desktop notifications, install `scripts/xagent-notify-antigravity` to `~/.local/bin/xagent-notify-antigravity`).
+
 ### Skill
 
 ```bash
-scripts/install-skills.sh [claude] [codex]     # ~/.claude/skills/cross-agent, ~/.agents/skills/cross-agent
+scripts/install-skills.sh [claude] [codex] [antigravity]     # ~/.claude/skills/cross-agent, ~/.agents/skills/cross-agent, ~/.gemini/config/skills/cross-agent
 ```
 
 ## 6. Topics
