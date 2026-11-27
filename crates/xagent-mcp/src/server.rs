@@ -551,6 +551,14 @@ pub(crate) struct AgentListArgs {
     /// Only agents with a live session.
     #[serde(default)]
     online_only: bool,
+    /// Optional case-insensitive substring match against `id`, `display_name`, `project_topic`, or `client`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(max = 200))]
+    query: Option<String>,
+    /// Optional exact case-insensitive filter on `client` (e.g. `antigravity`, `claude`, `codex`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(max = 64))]
+    client: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -697,8 +705,10 @@ impl Connection {
     }
 
     #[tool(
-        description = "Known agents with client type and online presence. For a Claude Code \
-                       peer, display_name is its session name: the address SendMessage uses.",
+        description = "Known agents with client type and online presence. Supports optional \
+                       `online_only`, `query` (substring on id/display_name/project_topic/client), \
+                       and `client` filters. For Claude Code and Antigravity peers, display_name \
+                       is the session/conversation title.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,

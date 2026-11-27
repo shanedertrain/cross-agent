@@ -380,6 +380,28 @@ fn clear_starts_a_new_conversation(
 /// `/clear` starts a new conversation: the connection re-binds to its identity at the next tool
 /// call, and the Stop hook (which reports the new session id) matches it; closing the client
 /// releases it.
+fn assert_agent_list_filters(a: &mut Mcp, bravo_id: &str) {
+    let filtered = a.call("agent_list", json!({ "query": "brav" }));
+    assert_eq!(
+        filtered["agents"].as_array().map(Vec::len),
+        Some(1),
+        "case-insensitive substring match on display_name: {filtered}"
+    );
+    assert_eq!(filtered["agents"][0]["id"], bravo_id);
+
+    let by_client = a.call(
+        "agent_list",
+        json!({ "client": "claude-code", "online_only": true }),
+    );
+    assert_eq!(
+        by_client["agents"].as_array().map(Vec::len),
+        Some(2),
+        "client filter matches both claude-code peers: {by_client}"
+    );
+    let no_match = a.call("agent_list", json!({ "client": "antigravity" }));
+    assert_eq!(no_match["agents"].as_array().map(Vec::len), Some(0));
+}
+
 #[test]
 fn claude_code_conversations_message_each_other_over_mcp() {
     let nats = Nats::start();
@@ -436,6 +458,7 @@ fn claude_code_conversations_message_each_other_over_mcp() {
         listed_a["display_name"], "infra-12",
         "a derived name is the SendMessage address too"
     );
+    assert_agent_list_filters(&mut a, &bravo_id);
 
     let sent = a.call(
         "dm_send",

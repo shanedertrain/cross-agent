@@ -214,6 +214,12 @@ pub struct SessionUpdate {
 pub struct AgentList {
     #[serde(default)]
     pub online_only: bool,
+    /// Optional case-insensitive substring filter against `id`, `display_name`, `project_topic`, or `client`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+    /// Optional exact case-insensitive filter on client type (e.g. `antigravity`, `claude`, `codex`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

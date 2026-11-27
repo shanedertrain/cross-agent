@@ -50,6 +50,18 @@ impl Daemon {
             .live_agents(WORKSPACE)
             .await
             .map_err(|e| registry_unavailable(&e))?;
+        let query = params
+            .query
+            .as_deref()
+            .map(str::trim)
+            .filter(|q| !q.is_empty())
+            .map(str::to_ascii_lowercase);
+        let client_filter = params
+            .client
+            .as_deref()
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+            .map(str::to_ascii_lowercase);
         let agents: Vec<AgentView> = records
             .into_iter()
             .map(|r| AgentView {
@@ -61,6 +73,21 @@ impl Daemon {
                 project_topic: r.project_topic,
             })
             .filter(|a| a.online || !params.online_only)
+            .filter(|a| {
+                client_filter
+                    .as_deref()
+                    .is_none_or(|c| a.client.eq_ignore_ascii_case(c))
+            })
+            .filter(|a| {
+                query.as_deref().is_none_or(|q| {
+                    a.id.to_ascii_lowercase().contains(q)
+                        || a.display_name.to_ascii_lowercase().contains(q)
+                        || a.client.to_ascii_lowercase().contains(q)
+                        || a.project_topic
+                            .as_deref()
+                            .is_some_and(|t| t.to_ascii_lowercase().contains(q))
+                })
+            })
             .collect();
         Ok(serde_json::json!({ "agents": agents }))
     }

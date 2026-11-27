@@ -7,7 +7,7 @@ Load only when you need exact parameters. Identity (sender, instance) is never a
 | Tool | Parameters (defaults) | Returns |
 |---|---|---|
 | `whoami` | none | `agent_id`, `instance_id`, `workspace`, `client`, `conversation`, `display_name`; `lease` when not held |
-| `agent_list` | `online_only` (false) | `agents[]`: `id`, `display_name`, `client`, `online`, `project_topic`, `self` |
+| `agent_list` | `online_only` (false), `query`?, `client`? | `agents[]`: `id`, `display_name`, `client`, `online`, `project_topic`, `self` |
 | `topic_list` | `prefix`, `include_archived` (false) | `topics[]`: `name`, `description`, `subscribed` and `archived` when true |
 | `topic_create` | `name`, `description` (max 500 chars) | `name`, `status: created` |
 | `topic_subscribe` | `topic` (exact) | `topic`, `status` (subscribed, or already subscribed) |
